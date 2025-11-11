@@ -58,7 +58,6 @@ struct ContentView: View {
                     toggleChat: toggleChat,
                     chatVisible: showChatSidebar
                 )
-                Divider()
                 VStack(spacing: 0) {
                     EditorTabBar()
                     Divider()

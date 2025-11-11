@@ -31,6 +31,7 @@ struct EditorTabBar: View {
                 .frame(maxWidth: .infinity)
             } else {
                 ScrollView(.horizontal, showsIndicators: false) {
+                    ScrollViewReader { proxy in
                     HStack(spacing: 4) {
                         ForEach(appModel.tabs) { tab in
                             EditorTabChip(
@@ -38,6 +39,7 @@ struct EditorTabBar: View {
                                 isActive: appModel.activeTabID == tab.id,
                                 closeAction: { appModel.closeTab(tab) }
                             )
+                            .id(tab.id)
                             .zIndex(draggingTab == tab ? 1 : 0)
                             .offset(x: draggingTab == tab ? dragTranslation : 0)
                             .onTapGesture {
@@ -51,6 +53,13 @@ struct EditorTabBar: View {
                             .frame(width: 24, height: 32)
                     }
                     .padding(.horizontal, 8)
+                    .onChange(of: appModel.activeTabID) { target in
+                        guard let target else { return }
+                        withAnimation(.easeInOut(duration: 0.2)) {
+                            proxy.scrollTo(target, anchor: .center)
+                        }
+                    }
+                    }
                 }
                 .frame(height: 36)
                 .frame(maxWidth: .infinity)
