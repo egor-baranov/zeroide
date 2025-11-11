@@ -128,6 +128,9 @@ final class AppModel: NSObject, ObservableObject {
     @Published var fileContent: String = ""
     @Published var tabs: [EditorTab] = []
     @Published var activeTabID: EditorTab.ID?
+    @Published var recentWorkspaces: [URL] = []
+
+    private let recentWorkspacesKey = "recentWorkspaces"
 
     var activeTab: EditorTab? {
         guard let activeTabID else { return nil }
@@ -140,10 +143,8 @@ final class AppModel: NSObject, ObservableObject {
 
     override init() {
         super.init()
-        workspaceURL = UserDefaults.standard.url(forKey: "lastWorkspace")
-        if workspaceURL != nil {
-            rebuildFileTree()
-            state = .ready
+        if let saved = UserDefaults.standard.array(forKey: recentWorkspacesKey) as? [String] {
+            recentWorkspaces = saved.compactMap { URL(fileURLWithPath: $0) }
         }
     }
 
@@ -157,6 +158,18 @@ final class AppModel: NSObject, ObservableObject {
         if panel.runModal() == .OK, let url = panel.url {
             prepareWorkspace(at: url)
         }
+    }
+
+    @MainActor
+    func openRecentWorkspace(_ url: URL) {
+        guard FileManager.default.fileExists(atPath: url.path) else {
+            state = .error("Folder not found at \(url.path)")
+            recentWorkspaces.removeAll { $0 == url }
+            let paths = recentWorkspaces.map { $0.path }
+            UserDefaults.standard.set(paths, forKey: recentWorkspacesKey)
+            return
+        }
+        prepareWorkspace(at: url)
     }
 
     func setEditorMode(_ mode: EditorMode) {
@@ -297,21 +310,36 @@ final class AppModel: NSObject, ObservableObject {
         activate(tab: tab)
     }
 
-    private func prepareWorkspace(at url: URL) {
+    func prepareWorkspace(at url: URL) {
         workspaceURL = url
         UserDefaults.standard.set(url, forKey: "lastWorkspace")
+        recordRecentWorkspace(url)
         selectedFileURL = nil
         fileContent = ""
         activeTabID = nil
         tabs.removeAll()
         rebuildFileTree()
+        openFirstFileIfAvailable()
 
         switch editorMode {
         case .native:
             state = .ready
+            if selectedFileURL == nil {
+                openFirstFileIfAvailable()
+            }
         case .workbench:
             reloadWorkbench()
         }
+    }
+
+    private func recordRecentWorkspace(_ url: URL) {
+        recentWorkspaces.removeAll { $0 == url }
+        recentWorkspaces.insert(url, at: 0)
+        if recentWorkspaces.count > 10 {
+            recentWorkspaces = Array(recentWorkspaces.prefix(10))
+        }
+        let paths = recentWorkspaces.map { $0.path }
+        UserDefaults.standard.set(paths, forKey: recentWorkspacesKey)
     }
 
     private func rebuildFileTree() {
@@ -320,6 +348,24 @@ final class AppModel: NSObject, ObservableObject {
             return
         }
         fileTree = buildNodes(at: root)
+    }
+
+    private func openFirstFileIfAvailable() {
+        guard selectedFileURL == nil else { return }
+        if let url = firstFileURL(in: fileTree) {
+            openFile(at: url)
+        }
+    }
+
+    private func firstFileURL(in nodes: [WorkspaceNode]) -> URL? {
+        for node in nodes {
+            if node.isDirectory, let children = node.children, let url = firstFileURL(in: children) {
+                return url
+            } else if !node.isDirectory {
+                return node.url
+            }
+        }
+        return nil
     }
 
     private func buildNodes(at url: URL, depth: Int = 0) -> [WorkspaceNode] {

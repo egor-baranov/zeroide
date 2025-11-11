@@ -13,6 +13,23 @@ struct ContentView: View {
     ]
 
     var body: some View {
+        Group {
+            if appModel.workspaceURL == nil {
+                ZeroWelcomeView()
+            } else {
+                mainWorkspaceView
+            }
+        }
+        .frame(minWidth: 1080, minHeight: 720)
+        .animation(.easeInOut(duration: 0.25), value: showSidebar)
+        .animation(.easeInOut(duration: 0.25), value: showChatSidebar)
+        .background(
+            WindowTitleUpdater(title: appModel.workspaceURL?.lastPathComponent ?? "ID3")
+                .frame(width: 0, height: 0)
+        )
+    }
+
+    private var mainWorkspaceView: some View {
         HStack(spacing: 0) {
             if showSidebar {
                 WorkspaceSidebar()
@@ -73,13 +90,6 @@ struct ContentView: View {
                     .transition(.move(edge: .trailing).combined(with: .opacity))
             }
         }
-        .frame(minWidth: 1080, minHeight: 720)
-        .animation(.easeInOut(duration: 0.25), value: showSidebar)
-        .animation(.easeInOut(duration: 0.25), value: showChatSidebar)
-        .background(
-            WindowTitleUpdater(title: appModel.workspaceURL?.lastPathComponent ?? "ID3")
-                .frame(width: 0, height: 0)
-        )
     }
 
     private func toggleChat() {
@@ -200,12 +210,7 @@ private struct EditorSurface: View {
             switch appModel.editorMode {
             case .native:
                 if showWorkspacePlaceholder {
-                    EditorPlaceholderView(
-                        title: "Open a workspace",
-                        message: "Choose a folder to load files into the editor.",
-                        buttonTitle: "Open Folder…",
-                        action: appModel.presentWorkspacePicker
-                    )
+                    ZeroWelcomeView()
                 } else if showStartTab {
                     StartTabView(
                         addTabAction: appModel.createStartTab,
