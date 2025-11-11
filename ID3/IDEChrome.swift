@@ -93,6 +93,7 @@ private struct EditorTabChip: View {
     let isActive: Bool
     let closeAction: () -> Void
     @State private var isHovering = false
+    @State private var isCloseHovering = false
 
     var body: some View {
         HStack(spacing: 6) {
@@ -101,12 +102,18 @@ private struct EditorTabChip: View {
             Button(action: closeAction) {
                 Image(systemName: "xmark")
                     .font(.system(size: 9, weight: .semibold))
-                    .padding(4)
+                    .padding(3)
+                    .background(
+                        Circle()
+                            .fill(isCloseHovering ? Color.primary.opacity(0.15) : Color.clear)
+                    )
             }
             .buttonStyle(.plain)
+            .onHover { isCloseHovering = $0 }
             .opacity(isActive ? 1 : 0.6)
         }
-        .padding(.horizontal, 12)
+        .padding(.leading, 12)
+        .padding(.trailing, 6)
         .padding(.vertical, 6)
         .background(backgroundColor)
         .cornerRadius(8)

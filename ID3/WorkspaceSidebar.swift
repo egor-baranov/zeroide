@@ -4,6 +4,8 @@ struct WorkspaceSidebar: View {
     @EnvironmentObject private var appModel: AppModel
     @State private var searchText = ""
     @State private var expandedNodes: Set<URL> = []
+    @State private var showSearch = false
+    @State private var selectedPanel: SidebarPanel = .structure
 
     private var tree: [WorkspaceNode] {
         let term = searchText.trimmingCharacters(in: .whitespacesAndNewlines).lowercased()
@@ -20,11 +22,23 @@ struct WorkspaceSidebar: View {
 
     var body: some View {
         VStack(spacing: 0) {
-            searchField
-            Divider()
-            ScrollView {
-                FileTreeView(nodes: displayTree, expanded: $expandedNodes, depth: 0)
-                    .padding(.vertical, 4)
+            SidebarTabs(selected: $selectedPanel)
+                .padding(.horizontal, 12)
+                .padding(.top, 12)
+
+            if showSearch && selectedPanel == .structure {
+                searchField
+            }
+            Group {
+                switch selectedPanel {
+                case .structure:
+                    ScrollView {
+                        FileTreeView(nodes: displayTree, expanded: $expandedNodes, depth: 0)
+                            .padding(.vertical, 4)
+                    }
+                case .commit, .find, .hierarchy:
+                    SidebarPlaceholder(title: selectedPanel.title, description: selectedPanel.description)
+                }
             }
             .frame(maxWidth: .infinity, maxHeight: .infinity)
             .background(Color.clear)
@@ -36,6 +50,7 @@ struct WorkspaceSidebar: View {
             expandedNodes.removeAll()
             syncRootExpansion()
         }
+        .background(SidebarKeyCatcher(toggleSearch: toggleSearch))
     }
 
     private var searchField: some View {
@@ -70,6 +85,16 @@ struct WorkspaceSidebar: View {
     private func syncRootExpansion() {
         if let root = appModel.workspaceURL {
             expandedNodes.insert(root)
+        }
+    }
+
+    private func toggleSearch() {
+        guard selectedPanel == .structure else { return }
+        withAnimation(.easeInOut(duration: 0.2)) {
+            showSearch.toggle()
+            if !showSearch {
+                searchText = ""
+            }
         }
     }
 
@@ -117,7 +142,7 @@ struct WorkspaceSidebar: View {
         }
     }
 
-    private struct FileRow: View {
+private struct FileRow: View {
         @EnvironmentObject private var appModel: AppModel
         let node: WorkspaceNode
         let isExpanded: Bool?
@@ -165,6 +190,71 @@ struct WorkspaceSidebar: View {
                     appModel.selectFile(node)
                 }
             }
+        }
+    }
+}
+
+private struct SidebarTabs: View {
+    @Binding var selected: SidebarPanel
+
+    var body: some View {
+        Picker("Sidebar Mode", selection: $selected) {
+            ForEach(SidebarPanel.allCases) { panel in
+                Image(systemName: panel.systemImage)
+                    .tag(panel)
+                    .help(panel.title)
+            }
+        }
+        .pickerStyle(.segmented)
+        .labelsHidden()
+    }
+}
+
+private struct SidebarPlaceholder: View {
+    let title: String
+    let description: String
+
+    var body: some View {
+        VStack(spacing: 8) {
+            Text(title)
+                .font(.headline)
+            Text(description)
+                .font(.caption)
+                .foregroundStyle(.secondary)
+        }
+        .frame(maxWidth: .infinity, maxHeight: .infinity)
+    }
+}
+
+private enum SidebarPanel: String, CaseIterable, Identifiable {
+    case structure = "Structure"
+    case commit = "Commit"
+    case find = "Find"
+    case hierarchy = "Hierarchy"
+
+    var id: Self { self }
+
+    var title: String { rawValue }
+
+    var systemImage: String {
+        switch self {
+        case .structure: return "folder"
+        case .commit: return "clock.arrow.circlepath"
+        case .find: return "magnifyingglass"
+        case .hierarchy: return "rectangle.grid.1x2"
+        }
+    }
+
+    var description: String {
+        switch self {
+        case .structure:
+            return ""
+        case .commit:
+            return "View pending changes and commit history."
+        case .find:
+            return "Search across your workspace."
+        case .hierarchy:
+            return "Browse symbol hierarchies."
         }
     }
 }

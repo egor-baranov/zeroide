@@ -1,4 +1,5 @@
 import SwiftUI
+import AppKit
 
 struct ContentView: View {
     @EnvironmentObject private var appModel: AppModel
@@ -117,23 +118,9 @@ private struct EditorToolbar: View {
                     )
             }
             .buttonStyle(.plain)
+            .keyboardShortcut("s", modifiers: [.command])
 
-            Capsule()
-                .fill(Color.primary.opacity(0.08))
-                .overlay(
-                    HStack(spacing: 6) {
-                        Image(systemName: "doc")
-                            .font(.system(size: 12, weight: .semibold))
-                            .foregroundStyle(.secondary)
-                        Text(currentPath)
-                            .font(.system(size: 12, weight: .medium))
-                            .foregroundColor(.secondary)
-                            .lineLimit(1)
-                            .truncationMode(.head)
-                            .textSelection(.enabled)
-                    }
-                    .padding(.horizontal, 10)
-                )
+            CommandBar(path: currentPath)
                 .frame(height: 26)
 
             Button(action: toggleChat) {
@@ -183,6 +170,73 @@ private struct DragHandle: View {
                 .frame(width: 1)
         }
         .contentShape(Rectangle())
+    }
+}
+
+private struct CommandBar: View {
+    let path: String
+    @State private var requestFocus = false
+    @State private var requestBlur = false
+
+    var body: some View {
+        ZStack(alignment: .center) {
+            Capsule()
+                .fill(Color.primary.opacity(0.08))
+                .overlay(
+                    Capsule().stroke(Color.primary.opacity(0.12), lineWidth: 1)
+                )
+            CommandBarTextField(text: path, focusTrigger: $requestFocus, blurTrigger: $requestBlur)
+                .padding(.horizontal, 10)
+                .padding(.vertical, 4)
+                .frame(maxWidth: .infinity, alignment: .center)
+        }
+        .contentShape(Rectangle())
+        .onTapGesture {
+            requestFocus = true
+        }
+        .background(
+            CommandBarShortcutCatcher(
+                onFocus: { requestFocus = true },
+                onBlur: { requestBlur = true }
+            )
+        )
+    }
+}
+
+private struct CommandBarTextField: NSViewRepresentable {
+    var text: String
+    @Binding var focusTrigger: Bool
+    @Binding var blurTrigger: Bool
+
+    func makeNSView(context: Context) -> NSTextField {
+        let field = NSTextField(labelWithString: text)
+        field.isSelectable = true
+        field.lineBreakMode = .byTruncatingHead
+        field.drawsBackground = false
+        field.isBordered = false
+        field.font = NSFont.systemFont(ofSize: 12, weight: .medium)
+        field.textColor = NSColor.secondaryLabelColor
+        field.alignment = .center
+        return field
+    }
+
+    func updateNSView(_ nsView: NSTextField, context: Context) {
+        if nsView.stringValue != text {
+            nsView.stringValue = text
+        }
+        if focusTrigger, let window = nsView.window {
+            window.makeFirstResponder(nsView)
+            nsView.selectText(nil)
+            DispatchQueue.main.async {
+                focusTrigger = false
+            }
+        }
+        if blurTrigger, let window = nsView.window {
+            window.makeFirstResponder(nil)
+            DispatchQueue.main.async {
+                blurTrigger = false
+            }
+        }
     }
 }
 
