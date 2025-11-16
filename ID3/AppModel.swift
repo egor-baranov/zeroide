@@ -262,13 +262,19 @@ final class AppModel: NSObject, ObservableObject {
         loadFileContents(from: url)
     }
 
-    func openWebURL(_ url: URL) {
+    func openWebURL(_ url: URL, replaceCurrentTab: Bool = false) {
         let normalizedURL = normalizeWebURL(url)
         let tab = EditorTab(webURL: normalizedURL)
-        if tabs.contains(tab) == false {
-            tabs.append(tab)
+
+        if replaceCurrentTab, let activeID = activeTabID, let index = tabs.firstIndex(where: { $0.id == activeID }) {
+            tabs[index] = tab
+            activeTabID = tab.id
+        } else {
+            if tabs.contains(tab) == false {
+                tabs.append(tab)
+            }
+            activeTabID = tab.id
         }
-        activeTabID = tab.id
         selectedFileURL = nil
         fileContent = ""
         state = .ready
@@ -348,6 +354,11 @@ final class AppModel: NSObject, ObservableObject {
         }
     }
 
+    func closeActiveTab() {
+        guard let activeID = activeTabID, let tab = tabs.first(where: { $0.id == activeID }) else { return }
+        closeTab(tab)
+    }
+
     func closeTab(_ tab: EditorTab) {
         guard let index = tabs.firstIndex(of: tab) else { return }
         tabs.remove(at: index)
@@ -412,10 +423,14 @@ final class AppModel: NSObject, ObservableObject {
         }
     }
 
-    func createStartTab() {
+    func createStartTab(openImmediately: Bool = true) {
         let tab = EditorTab(kind: .canvas(UUID()))
         tabs.append(tab)
-        activate(tab: tab)
+        if openImmediately {
+            activate(tab: tab)
+        } else {
+            activeTabID = tab.id
+        }
     }
 
     func prepareWorkspace(at url: URL) {

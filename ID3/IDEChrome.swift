@@ -80,7 +80,7 @@ struct EditorTabBar: View {
                 TabOverflowButton()
             }
 
-            Button(action: appModel.createStartTab) {
+            Button(action: { appModel.createStartTab() }) {
                 Image(systemName: "plus")
                     .font(.system(size: 14, weight: .semibold))
                     .frame(width: 24, height: 24)
@@ -372,10 +372,10 @@ struct StartTabView: View {
         guard !trimmed.isEmpty else { return }
 
         if let url = URL(string: trimmed) {
-            appModel.openWebURL(url)
+            appModel.openWebURL(url, replaceCurrentTab: true)
         } else if let encoded = trimmed.addingPercentEncoding(withAllowedCharacters: .urlHostAllowed),
                   let url = URL(string: encoded) {
-            appModel.openWebURL(url)
+            appModel.openWebURL(url, replaceCurrentTab: true)
         }
 
         query = ""

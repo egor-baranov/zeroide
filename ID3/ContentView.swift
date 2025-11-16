@@ -462,6 +462,20 @@ private struct TabSwitcherShortcuts: View {
             .keyboardShortcut(.tab, modifiers: [.control, .shift])
             .buttonStyle(.plain)
             .opacity(0)
+
+            Button(action: { appModel.createStartTab() }) {
+                Color.clear.frame(width: 0, height: 0)
+            }
+            .keyboardShortcut("t", modifiers: [.command])
+            .buttonStyle(.plain)
+            .opacity(0)
+
+            Button(action: appModel.closeActiveTab) {
+                Color.clear.frame(width: 0, height: 0)
+            }
+            .keyboardShortcut("w", modifiers: [.command])
+            .buttonStyle(.plain)
+            .opacity(0)
         }
     }
 }
@@ -497,7 +511,7 @@ private struct EditorSurface: View {
                     WebTabView(url: webURL)
                 } else if showStartTab {
                     StartTabView(
-                        addTabAction: appModel.createStartTab,
+                        addTabAction: { appModel.createStartTab() },
                         openWorkspaceAction: appModel.presentWorkspacePicker
                     )
                 } else if showFilePlaceholder {
