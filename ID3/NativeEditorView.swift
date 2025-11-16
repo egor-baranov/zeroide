@@ -17,13 +17,42 @@ struct NativeEditorView: View {
     }
 
     var body: some View {
-        MonacoEditorView(
-            text: textBinding,
-            language: language,
-            theme: theme,
-            onTextChange: { _ in }
-        )
+        Group {
+            if let preview = previewType {
+                switch preview {
+                case .raster(let url):
+                    RasterImagePreview(url: url)
+                case .svg(let url):
+                    SVGPreviewView(url: url)
+                        .background(Color.white)
+                }
+            } else {
+                MonacoEditorView(
+                    text: textBinding,
+                    language: language,
+                    theme: theme,
+                    onTextChange: { _ in }
+                )
+            }
+        }
         .background(Color.ideEditorBackground)
         .frame(maxWidth: .infinity, maxHeight: .infinity)
+    }
+
+    private var previewType: PreviewType? {
+        guard let url = appModel.selectedFileURL else { return nil }
+        let ext = url.pathExtension.lowercased()
+        if ImagePreviewSupport.supportsRaster(ext: ext) {
+            return .raster(url)
+        }
+        if ext == "svg" {
+            return .svg(url)
+        }
+        return nil
+    }
+
+    private enum PreviewType {
+        case raster(URL)
+        case svg(URL)
     }
 }

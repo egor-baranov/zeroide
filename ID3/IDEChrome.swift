@@ -19,6 +19,8 @@ struct EditorTabBar: View {
     @State private var dragTranslation: CGFloat = 0
     @State private var tabWidths: [EditorTab.ID: CGFloat] = [:]
     @State private var lastReorderTranslation: CGFloat = 0
+    @State private var availableWidth: CGFloat = 0
+    private let overflowThreshold: CGFloat = 280
 
     var body: some View {
         HStack(spacing: 8) {
@@ -66,6 +68,16 @@ struct EditorTabBar: View {
                 .onPreferenceChange(TabWidthPreferenceKey.self) { values in
                     tabWidths.merge(values) { _, new in new }
                 }
+                .background(
+                    GeometryReader { proxy in
+                        Color.clear.preference(key: TabBarAvailableWidthKey.self, value: proxy.size.width)
+                    }
+                )
+                .onPreferenceChange(TabBarAvailableWidthKey.self) { availableWidth = $0 }
+            }
+
+            if shouldShowOverflowButton {
+                TabOverflowButton()
             }
 
             Button(action: appModel.createStartTab) {
@@ -84,6 +96,81 @@ struct EditorTabBar: View {
         .padding(.horizontal, 8)
         .padding(.vertical, 2)
         .background(Color.ideBackground)
+    }
+}
+
+private extension EditorTabBar {
+    var shouldShowOverflowButton: Bool {
+        guard !appModel.tabs.isEmpty, availableWidth > 0 else { return false }
+        guard let averageWidth = tabWidths.values.average else { return false }
+        let totalNeeded = averageWidth * CGFloat(appModel.tabs.count)
+        let reservedRight: CGFloat = 64 // plus + overflow controls
+        return totalNeeded > max(availableWidth - reservedRight, 0)
+    }
+}
+
+private struct TabBarAvailableWidthKey: PreferenceKey {
+    static var defaultValue: CGFloat = 0
+    static func reduce(value: inout CGFloat, nextValue: () -> CGFloat) {
+        value = nextValue()
+    }
+}
+
+private struct TabOverflowButton: View {
+    @EnvironmentObject private var appModel: AppModel
+    @State private var showList = false
+
+    var body: some View {
+        Button(action: { showList.toggle() }) {
+            Image(systemName: "chevron.down")
+                .font(.system(size: 12, weight: .semibold))
+                .frame(width: 24, height: 24)
+                .foregroundStyle(.primary)
+                .background(
+                    RoundedRectangle(cornerRadius: 6, style: .continuous)
+                        .fill(Color.primary.opacity(0.08))
+                )
+        }
+        .buttonStyle(.plain)
+        .popover(isPresented: $showList, arrowEdge: .top) {
+            VStack(alignment: .leading, spacing: 0) {
+                ForEach(appModel.tabs) { tab in
+                    Button {
+                        appModel.activate(tab: tab)
+                        showList = false
+                    } label: {
+                        HStack {
+                            Text(tab.title)
+                                .font(.system(size: 13, weight: .semibold))
+                                .foregroundColor(appModel.activeTabID == tab.id ? .white : .primary)
+                            Spacer()
+                            Button {
+                                appModel.closeTab(tab)
+                            } label: {
+                                Image(systemName: "xmark")
+                                    .font(.system(size: 10, weight: .semibold))
+                                    .foregroundColor(.secondary)
+                            }
+                            .buttonStyle(.plain)
+                        }
+                        .padding(.horizontal, 12)
+                        .padding(.vertical, 8)
+                        .background(appModel.activeTabID == tab.id ? Color.accentColor : Color.clear)
+                    }
+                    .buttonStyle(.plain)
+                }
+            }
+            .padding(.vertical, 8)
+            .frame(width: 220)
+        }
+    }
+}
+
+private extension Collection where Element == CGFloat {
+    var average: CGFloat? {
+        guard !isEmpty else { return nil }
+        let sum = reduce(.zero, +)
+        return sum / CGFloat(count)
     }
 }
 

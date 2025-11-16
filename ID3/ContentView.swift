@@ -28,6 +28,7 @@ struct ContentView: View {
             WindowTitleUpdater(title: appModel.workspaceURL?.lastPathComponent ?? "ID3")
                 .frame(width: 0, height: 0)
         )
+        .overlay(TabSwitcherShortcuts())
     }
 
     private var mainWorkspaceView: some View {
@@ -236,6 +237,28 @@ private struct CommandBarTextField: NSViewRepresentable {
             DispatchQueue.main.async {
                 blurTrigger = false
             }
+        }
+    }
+}
+
+private struct TabSwitcherShortcuts: View {
+    @EnvironmentObject private var appModel: AppModel
+
+    var body: some View {
+        HStack {
+            Button(action: appModel.activateNextTab) {
+                Color.clear.frame(width: 0, height: 0)
+            }
+            .keyboardShortcut(.tab, modifiers: [.control])
+            .buttonStyle(.plain)
+            .opacity(0)
+
+            Button(action: appModel.activatePreviousTab) {
+                Color.clear.frame(width: 0, height: 0)
+            }
+            .keyboardShortcut(.tab, modifiers: [.control, .shift])
+            .buttonStyle(.plain)
+            .opacity(0)
         }
     }
 }

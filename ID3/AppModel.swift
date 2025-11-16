@@ -255,6 +255,26 @@ final class AppModel: NSObject, ObservableObject {
         }
     }
 
+    func activateNextTab() {
+        guard !tabs.isEmpty else { return }
+        if let activeID = activeTabID, let index = tabs.firstIndex(where: { $0.id == activeID }) {
+            let nextIndex = (index + 1) % tabs.count
+            activate(tab: tabs[nextIndex])
+        } else if let first = tabs.first {
+            activate(tab: first)
+        }
+    }
+
+    func activatePreviousTab() {
+        guard !tabs.isEmpty else { return }
+        if let activeID = activeTabID, let index = tabs.firstIndex(where: { $0.id == activeID }) {
+            let prevIndex = (index - 1 + tabs.count) % tabs.count
+            activate(tab: tabs[prevIndex])
+        } else if let last = tabs.last {
+            activate(tab: last)
+        }
+    }
+
     func closeTab(_ tab: EditorTab) {
         guard let index = tabs.firstIndex(of: tab) else { return }
         tabs.remove(at: index)
@@ -439,6 +459,13 @@ final class AppModel: NSObject, ObservableObject {
     }
 
     private func loadFileContents(from url: URL) {
+        let ext = url.pathExtension.lowercased()
+        if ImagePreviewSupport.supportsRaster(ext: ext) || ext == "svg" {
+            fileContent = ""
+            state = .ready
+            return
+        }
+
         do {
             fileContent = try String(contentsOf: url)
             state = .ready
