@@ -128,10 +128,16 @@ private var commandBarWidthEstimate: CGFloat? {
     }
 
     private var currentPath: String {
-        guard let url = appModel.selectedFileURL ?? appModel.workspaceURL else {
-            return "No file open"
+        if let webURL = appModel.activeWebURL {
+            return webURL.absoluteString
         }
-        return url.path
+        if let fileURL = appModel.selectedFileURL {
+            return fileURL.path
+        }
+        if let workspace = appModel.workspaceURL {
+            return workspace.path
+        }
+        return "No file open"
     }
 
     private var currentProjectName: String? {
@@ -469,7 +475,10 @@ private struct EditorSurface: View {
     }
 
     private var showFilePlaceholder: Bool {
-        appModel.workspaceURL != nil && appModel.selectedFileURL == nil && !appModel.isShowingStartTab
+        appModel.workspaceURL != nil
+        && appModel.selectedFileURL == nil
+        && !appModel.isShowingStartTab
+        && appModel.activeWebURL == nil
     }
 
     private var showStartTab: Bool {
@@ -484,6 +493,8 @@ private struct EditorSurface: View {
             case .native:
                 if showWorkspacePlaceholder {
                     ZeroWelcomeView()
+                } else if let webURL = appModel.activeWebURL {
+                    WebTabView(url: webURL)
                 } else if showStartTab {
                     StartTabView(
                         addTabAction: appModel.createStartTab,

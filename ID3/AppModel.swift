@@ -66,6 +66,7 @@ struct EditorTab: Identifiable, Hashable {
     enum Kind: Hashable {
         case file(URL)
         case canvas(UUID)
+        case web(URL)
     }
 
     let kind: Kind
@@ -78,12 +79,18 @@ struct EditorTab: Identifiable, Hashable {
         self.kind = kind
     }
 
+    init(webURL: URL) {
+        self.kind = .web(webURL)
+    }
+
     var id: AnyHashable {
         switch kind {
         case .file(let url):
             return AnyHashable(url)
         case .canvas(let uuid):
             return AnyHashable(uuid)
+        case .web(let url):
+            return AnyHashable("web-\(url.absoluteString)")
         }
     }
 
@@ -93,6 +100,11 @@ struct EditorTab: Identifiable, Hashable {
             return url.lastPathComponent
         case .canvas:
             return "New Tab"
+        case .web(let url):
+            if let host = url.host, !host.isEmpty {
+                return host
+            }
+            return url.absoluteString
         }
     }
 
@@ -142,6 +154,13 @@ final class AppModel: NSObject, ObservableObject {
 
     var isShowingStartTab: Bool {
         activeTab?.isCanvas ?? false
+    }
+
+    var activeWebURL: URL? {
+        if case let .web(url) = activeTab?.kind {
+            return url
+        }
+        return nil
     }
 
     override init() {
@@ -243,11 +262,65 @@ final class AppModel: NSObject, ObservableObject {
         loadFileContents(from: url)
     }
 
+    func openWebURL(_ url: URL) {
+        let normalizedURL = normalizeWebURL(url)
+        let tab = EditorTab(webURL: normalizedURL)
+        if tabs.contains(tab) == false {
+            tabs.append(tab)
+        }
+        activeTabID = tab.id
+        selectedFileURL = nil
+        fileContent = ""
+        state = .ready
+    }
+
+    private func normalizeWebURL(_ input: URL) -> URL {
+        if let scheme = input.scheme?.lowercased(), (scheme == "http" || scheme == "https") {
+            return input
+        }
+
+        let trimmed = input.absoluteString.trimmingCharacters(in: .whitespacesAndNewlines)
+        if trimmed.isEmpty {
+            return input
+        }
+
+        if let fullURL = URL(string: "https://\(trimmed)"), looksLikeDomain(trimmed) {
+            return fullURL
+        }
+
+        if let httpsURL = URL(string: "https://\(trimmed)") {
+            return httpsURL
+        }
+
+        return input
+    }
+
+    private func looksLikeDomain(_ text: String) -> Bool {
+        struct TLDCache {
+            static let suffixes: Set<String> = [
+                "com", "org", "net", "io", "app", "dev", "ai", "co", "edu", "gov", "biz",
+                "info", "me", "us", "uk", "de", "jp", "fr", "au", "ca", "es", "it", "nl",
+                "se", "no", "fi", "cz", "pl", "br", "ru", "in"
+            ]
+        }
+
+        let components = text.lowercased().split(separator: ".")
+        guard components.count >= 2 else { return false }
+        let tld = components.last ?? ""
+        return components.allSatisfy { !$0.isEmpty && $0.rangeOfCharacter(from: CharacterSet.alphanumerics.union(CharacterSet(charactersIn: "-")).inverted) == nil }
+            && TLDCache.suffixes.contains(String(tld))
+    }
+
     func activate(tab: EditorTab) {
         switch tab.kind {
         case .file(let url):
             openFile(at: url)
         case .canvas:
+            activeTabID = tab.id
+            selectedFileURL = nil
+            fileContent = ""
+            state = .ready
+        case .web:
             activeTabID = tab.id
             selectedFileURL = nil
             fileContent = ""

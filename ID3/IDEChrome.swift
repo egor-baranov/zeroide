@@ -256,6 +256,7 @@ struct EditorPlaceholderView: View {
 
 struct StartTabView: View {
     @Environment(\.colorScheme) private var colorScheme
+    @EnvironmentObject private var appModel: AppModel
     @State private var query = ""
     var addTabAction: () -> Void
     var openWorkspaceAction: () -> Void
@@ -294,12 +295,13 @@ struct StartTabView: View {
                         TextField("Ask changes about project…", text: $query)
                             .textFieldStyle(.plain)
                             .font(.system(size: 16))
+                            .onSubmit(handleQuerySubmit)
                         Button(action: {}) {
                             Image(systemName: "mic.fill")
                         }
                         .buttonStyle(.plain)
                         .foregroundStyle(.secondary)
-                        Button(action: {}) {
+                        Button(action: handleQuerySubmit) {
                             Image(systemName: "arrow.up")
                         }
                         .buttonStyle(.plain)
@@ -363,6 +365,20 @@ struct StartTabView: View {
             .padding(.horizontal, 60)
             .frame(maxWidth: .infinity, maxHeight: .infinity) 
         }
+    }
+
+    private func handleQuerySubmit() {
+        let trimmed = query.trimmingCharacters(in: .whitespacesAndNewlines)
+        guard !trimmed.isEmpty else { return }
+
+        if let url = URL(string: trimmed) {
+            appModel.openWebURL(url)
+        } else if let encoded = trimmed.addingPercentEncoding(withAllowedCharacters: .urlHostAllowed),
+                  let url = URL(string: encoded) {
+            appModel.openWebURL(url)
+        }
+
+        query = ""
     }
 }
 
