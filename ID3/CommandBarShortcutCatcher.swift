@@ -1,11 +1,10 @@
 import SwiftUI
 
 struct CommandBarShortcutCatcher: NSViewRepresentable {
-    let onFocus: () -> Void
-    let onBlur: () -> Void
+    let activate: () -> Void
 
     func makeCoordinator() -> Coordinator {
-        Coordinator(onFocus: onFocus, onBlur: onBlur)
+        Coordinator(activate: activate)
     }
 
     func makeNSView(context: Context) -> NSView {
@@ -17,11 +16,9 @@ struct CommandBarShortcutCatcher: NSViewRepresentable {
     func updateNSView(_ nsView: NSView, context: Context) {}
 
     final class Coordinator {
-        let onFocus: () -> Void
-        let onBlur: () -> Void
-        init(onFocus: @escaping () -> Void, onBlur: @escaping () -> Void) {
-            self.onFocus = onFocus
-            self.onBlur = onBlur
+        let activate: () -> Void
+        init(activate: @escaping () -> Void) {
+            self.activate = activate
         }
     }
 
@@ -32,11 +29,7 @@ struct CommandBarShortcutCatcher: NSViewRepresentable {
 
         override func performKeyEquivalent(with event: NSEvent) -> Bool {
             if event.modifierFlags.contains(.command), event.charactersIgnoringModifiers == "l" {
-                coordinator?.onFocus()
-                return true
-            }
-            if event.keyCode == 53 { // escape
-                coordinator?.onBlur()
+                coordinator?.activate()
                 return true
             }
             return super.performKeyEquivalent(with: event)

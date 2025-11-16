@@ -348,9 +348,9 @@ private struct DragHandle: View {
 }
 
 private struct CommandBar: View {
+    @EnvironmentObject private var appModel: AppModel
     let path: String
-    @State private var requestFocus = false
-    @State private var requestBlur = false
+    @State private var showPalette = false
 
     var body: some View {
         ZStack(alignment: .center) {
@@ -359,57 +359,27 @@ private struct CommandBar: View {
                 .overlay(
                     Capsule().stroke(Color.primary.opacity(0.12), lineWidth: 1)
                 )
-            CommandBarTextField(text: path, focusTrigger: $requestFocus, blurTrigger: $requestBlur)
+            Text(path)
+                .font(.system(size: 12, weight: .medium))
+                .foregroundStyle(.secondary)
+                .lineLimit(1)
+                .truncationMode(.head)
                 .padding(.horizontal, 10)
                 .padding(.vertical, 4)
                 .frame(maxWidth: .infinity, alignment: .center)
         }
         .contentShape(Rectangle())
-        .onTapGesture {
-            requestFocus = true
-        }
+        .onTapGesture { showPalette = true }
         .background(
-            CommandBarShortcutCatcher(
-                onFocus: { requestFocus = true },
-                onBlur: { requestBlur = true }
-            )
+            CommandBarShortcutCatcher(activate: { showPalette = true })
         )
-    }
-}
-
-private struct CommandBarTextField: NSViewRepresentable {
-    var text: String
-    @Binding var focusTrigger: Bool
-    @Binding var blurTrigger: Bool
-
-    func makeNSView(context: Context) -> NSTextField {
-        let field = NSTextField(labelWithString: text)
-        field.isSelectable = true
-        field.lineBreakMode = .byTruncatingHead
-        field.drawsBackground = false
-        field.isBordered = false
-        field.font = NSFont.systemFont(ofSize: 12, weight: .medium)
-        field.textColor = NSColor.secondaryLabelColor
-        field.alignment = .center
-        return field
-    }
-
-    func updateNSView(_ nsView: NSTextField, context: Context) {
-        if nsView.stringValue != text {
-            nsView.stringValue = text
-        }
-        if focusTrigger, let window = nsView.window {
-            window.makeFirstResponder(nsView)
-            nsView.selectText(nil)
-            DispatchQueue.main.async {
-                focusTrigger = false
-            }
-        }
-        if blurTrigger, let window = nsView.window {
-            window.makeFirstResponder(nil)
-            DispatchQueue.main.async {
-                blurTrigger = false
-            }
+        .popover(isPresented: $showPalette, arrowEdge: .top) {
+            CommandPaletteView(
+                isPresented: $showPalette,
+                currentPath: path
+            )
+            .environmentObject(appModel)
+            .frame(width: 460, height: 360)
         }
     }
 }
@@ -569,4 +539,131 @@ private struct WorkbenchFallbackView: View {
 #Preview {
     ContentView()
         .environmentObject(AppModel())
+}
+private struct CommandPaletteView: View {
+    @EnvironmentObject private var appModel: AppModel
+    @Binding var isPresented: Bool
+    let currentPath: String
+    @State private var query = ""
+    @FocusState private var searchFocused: Bool
+
+    private var quickActions: [PaletteAction] {
+        [
+            PaletteAction(title: "Go to File", subtitle: nil, systemImage: "doc.text.magnifyingglass", shortcut: "⌘E", action: {}),
+            PaletteAction(title: "Show and Run Commands", subtitle: nil, systemImage: "command", shortcut: "⇧⌘P", action: {}),
+            PaletteAction(title: "Search for Text", subtitle: nil, systemImage: "text.magnifyingglass", shortcut: "⇧⌘F", action: {}),
+            PaletteAction(title: "Go to Symbol in Editor", subtitle: nil, systemImage: "at", shortcut: "⌘@", action: {}),
+            PaletteAction(title: "Start Debugging", subtitle: "debug", systemImage: "play.circle", shortcut: "F5", action: {}),
+            PaletteAction(title: "Run Task", subtitle: "task", systemImage: "hammer", shortcut: "⇧⌘B", action: {})
+        ]
+    }
+
+    private var filteredTabs: [EditorTab] {
+        let tabs = appModel.tabs
+        guard !query.isEmpty else { return tabs }
+        let lower = query.lowercased()
+        return tabs.filter { $0.title.lowercased().contains(lower) }
+    }
+
+    var body: some View {
+        VStack(alignment: .leading, spacing: 14) {
+            VStack(alignment: .leading, spacing: 4) {
+                TextField("Search files, content, and symbols", text: $query)
+                    .textFieldStyle(.plain)
+                    .font(.system(size: 16, weight: .medium))
+                    .padding(.horizontal, 12)
+                    .padding(.vertical, 10)
+                    .background(Color.secondary.opacity(0.08), in: Capsule())
+                    .focused($searchFocused)
+
+                Text(currentPath.isEmpty ? "No location" : currentPath)
+                    .font(.caption2)
+                    .foregroundStyle(.secondary)
+            }
+
+            Divider()
+
+            VStack(alignment: .leading, spacing: 6) {
+                ForEach(quickActions) { action in
+                    Button(action: {
+                        action.action?()
+                        isPresented = false
+                    }) {
+                        HStack {
+                            Label(action.title, systemImage: action.systemImage)
+                            if let subtitle = action.subtitle {
+                                Text(subtitle).foregroundStyle(.secondary)
+                            }
+                            Spacer()
+                            if let shortcut = action.shortcut {
+                                Text(shortcut).font(.caption).foregroundStyle(.secondary)
+                            }
+                        }
+                        .padding(.vertical, 4)
+                    }
+                    .buttonStyle(.plain)
+                }
+            }
+
+            Divider()
+
+            Text("Recently Opened")
+                .font(.caption)
+                .foregroundStyle(.secondary)
+
+            ScrollView {
+                VStack(alignment: .leading, spacing: 8) {
+                    if filteredTabs.isEmpty {
+                        Text("No tabs available")
+                            .foregroundStyle(.secondary)
+                            .padding(.vertical, 8)
+                    } else {
+                        ForEach(filteredTabs) { tab in
+                            Button {
+                                appModel.activate(tab: tab)
+                                isPresented = false
+                            } label: {
+                                HStack(alignment: .center, spacing: 8) {
+                                    Image(systemName: tab.isCanvas ? "square.on.square.dashed" : "doc.text")
+                                        .foregroundStyle(.secondary)
+                                    VStack(alignment: .leading, spacing: 2) {
+                                        Text(tab.title)
+                                            .font(.system(size: 13, weight: .semibold))
+                                        if let workspace = appModel.workspaceURL {
+                                            Text(workspace.lastPathComponent)
+                                                .font(.caption2)
+                                                .foregroundStyle(.secondary)
+                                        }
+                                    }
+                                    Spacer()
+                                }
+                                .padding(.vertical, 4)
+                                .padding(.horizontal, 4)
+                                .background(
+                                    RoundedRectangle(cornerRadius: 6, style: .continuous)
+                                        .fill(Color.primary.opacity(0.04))
+                                )
+                            }
+                            .buttonStyle(.plain)
+                        }
+                    }
+                }
+            }
+
+            Spacer()
+        }
+        .padding(20)
+        .frame(maxWidth: .infinity, maxHeight: .infinity)
+        .onAppear { searchFocused = true }
+        .onExitCommand { isPresented = false }
+    }
+}
+
+private struct PaletteAction: Identifiable {
+    let id = UUID()
+    let title: String
+    let subtitle: String?
+    let systemImage: String
+    let shortcut: String?
+    let action: (() -> Void)?
 }
