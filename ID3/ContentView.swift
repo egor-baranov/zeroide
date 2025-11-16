@@ -28,13 +28,15 @@ struct ContentView: View {
         .animation(.easeInOut(duration: 0.25), value: showSidebar)
         .animation(.easeInOut(duration: 0.25), value: showChatSidebar)
         .background(
-            WindowTitleUpdater(title: appModel.workspaceURL?.lastPathComponent ?? "ID3")
+            WindowTitleUpdater(title: appModel.workspaceURL?.lastPathComponent ?? "")
                 .frame(width: 0, height: 0)
         )
         .background(contentWidthReader)
         .onPreferenceChange(ContentWidthPreferenceKey.self) { contentWidth = $0 }
         .overlay(TabSwitcherShortcuts())
         .toolbar { workspaceToolbar }
+        .toolbarBackground(Color.ideBackground, for: .windowToolbar)
+        .toolbarBackground(.visible, for: .windowToolbar)
     }
 
     @ToolbarContentBuilder
@@ -47,6 +49,16 @@ struct ContentView: View {
                 } else {
                     EmptyView()
                 }
+            }
+        }
+
+        ToolbarItem(placement: .navigation) {
+            if let projectName = currentProjectName {
+                Text(projectName)
+                    .font(.system(size: 15, weight: .regular))
+                    .padding(.leading, 6)
+            } else {
+                EmptyView()
             }
         }
 
@@ -128,6 +140,10 @@ struct ContentView: View {
         return url.path
     }
 
+    private var currentProjectName: String? {
+        appModel.workspaceURL?.lastPathComponent
+    }
+
     private var mainWorkspaceView: some View {
         HStack(spacing: 0) {
             if showSidebar {
@@ -152,7 +168,6 @@ struct ContentView: View {
 
             VStack(spacing: 0) {
                 EditorTabBar()
-                Divider()
                 EditorSurface()
             }
             .frame(maxWidth: .infinity, maxHeight: .infinity)

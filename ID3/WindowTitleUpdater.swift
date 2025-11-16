@@ -22,5 +22,6 @@ struct WindowTitleUpdater: NSViewRepresentable {
         guard let window else { return }
         window.title = title
         window.titleVisibility = .hidden
+        window.titlebarAppearsTransparent = true
     }
 }

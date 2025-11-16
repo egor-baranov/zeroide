@@ -5,7 +5,7 @@ struct ID3App: App {
     @StateObject private var appModel = AppModel()
 
     var body: some Scene {
-        WindowGroup {
+        WindowGroup("") {
             ContentView()
                 .environmentObject(appModel)
         }
