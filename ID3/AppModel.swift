@@ -375,6 +375,25 @@ final class AppModel: NSObject, ObservableObject {
         }
     }
 
+    func closeOtherTabs(_ tab: EditorTab) {
+        guard let index = tabs.firstIndex(of: tab) else { return }
+        let target = tabs[index]
+        tabs = [target]
+        activate(tab: target)
+    }
+
+    func closeTabsToRight(of tab: EditorTab) {
+        guard let index = tabs.firstIndex(of: tab) else { return }
+        guard index < tabs.count - 1 else { return }
+
+        let removedIDs = Set(tabs[(index + 1)..<tabs.count].map { $0.id })
+        tabs.removeSubrange((index + 1)..<tabs.count)
+
+        if let activeID = activeTabID, removedIDs.contains(activeID) {
+            activate(tab: tab)
+        }
+    }
+
     func moveTab(_ dragging: EditorTab, before target: EditorTab?) {
         guard let fromIndex = tabs.firstIndex(of: dragging) else { return }
 

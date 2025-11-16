@@ -215,6 +215,17 @@ private struct EditorTabChip: View {
         .onHover { hovering in
             isHovering = hovering
         }
+        .contextMenu {
+            Button("Close Tab") {
+                closeAction()
+            }
+            Button("Close Other Tabs") {
+                appModel.closeOtherTabs(tab)
+            }
+            Button("Close Tabs to the Right") {
+                appModel.closeTabsToRight(of: tab)
+            }
+        }
     }
 
     private var backgroundColor: Color {
