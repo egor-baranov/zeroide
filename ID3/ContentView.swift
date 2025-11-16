@@ -12,6 +12,9 @@ struct ContentView: View {
     @State private var chatMessages: [ChatMessage] = [
         ChatMessage(role: .assistant, text: "Hi! I'm here if you need help or want to jot notes while you work.")
     ]
+    @State private var contentWidth: CGFloat = 0
+    @State private var sidebarButtonWidth: CGFloat = 0
+    @State private var chatButtonWidth: CGFloat = 0
 
     var body: some View {
         Group {
@@ -28,7 +31,101 @@ struct ContentView: View {
             WindowTitleUpdater(title: appModel.workspaceURL?.lastPathComponent ?? "ID3")
                 .frame(width: 0, height: 0)
         )
+        .background(contentWidthReader)
+        .onPreferenceChange(ContentWidthPreferenceKey.self) { contentWidth = $0 }
         .overlay(TabSwitcherShortcuts())
+        .toolbar { workspaceToolbar }
+    }
+
+    @ToolbarContentBuilder
+    private var workspaceToolbar: some ToolbarContent {
+        ToolbarItem(placement: .navigation) {
+            Group {
+                if appModel.workspaceURL != nil {
+                    sidebarToolbarButton
+                        .background(WidthObserver(width: $sidebarButtonWidth))
+                } else {
+                    EmptyView()
+                }
+            }
+        }
+
+        ToolbarItem(placement: .principal) {
+            Group {
+                if appModel.workspaceURL != nil {
+                    CommandBar(path: currentPath)
+                        .frame(height: 26)
+                        .commandBarWidth(commandBarWidthEstimate)
+                } else {
+                    EmptyView()
+                }
+            }
+            .frame(maxWidth: .infinity)
+        }
+
+        ToolbarItem(placement: .automatic) {
+            HStack {
+                if appModel.workspaceURL != nil {
+                    Spacer(minLength: 0)
+                    chatToolbarButton
+                        .background(WidthObserver(width: $chatButtonWidth))
+                }
+            }
+            .frame(maxWidth: .infinity, alignment: .trailing)
+        }
+    }
+
+    private var commandBarWidthEstimate: CGFloat? {
+        guard contentWidth > 0 else { return nil }
+        let reserved = sidebarButtonWidth + chatButtonWidth + toolbarSpacingAllowance
+        let available = contentWidth - reserved
+        return available > 0 ? available : nil
+    }
+
+    private var toolbarSpacingAllowance: CGFloat { 48 }
+
+    private var contentWidthReader: some View {
+        GeometryReader { proxy in
+            Color.clear.preference(key: ContentWidthPreferenceKey.self, value: proxy.size.width)
+        }
+    }
+
+    private var sidebarToolbarButton: some View {
+        Button(action: { withAnimation { showSidebar.toggle() } }) {
+            Image(systemName: "sidebar.leading")
+                .foregroundStyle(showSidebar ? .primary : .secondary)
+                .padding(6)
+                .background(
+                    RoundedRectangle(cornerRadius: 6, style: .continuous)
+                        .fill(showSidebar ? Color.primary.opacity(0.08) : Color.clear)
+                )
+        }
+        .buttonStyle(.plain)
+        .keyboardShortcut("s", modifiers: [.command])
+        .padding(.vertical, 6)
+    }
+
+    private var chatToolbarButton: some View {
+        Button(action: toggleChat) {
+            Label("Chat", systemImage: "bubble.left.fill")
+                .labelStyle(.titleAndIcon)
+                .padding(.horizontal, 10)
+                .padding(.vertical, 6)
+                .frame(minWidth: 80)
+                .background(
+                    RoundedRectangle(cornerRadius: 8, style: .continuous)
+                        .fill(showChatSidebar ? Color.ideAccent.opacity(0.2) : Color.secondary.opacity(0.15))
+                )
+        }
+        .buttonStyle(.plain)
+        .padding(.vertical, 6)
+    }
+
+    private var currentPath: String {
+        guard let url = appModel.selectedFileURL ?? appModel.workspaceURL else {
+            return "No file open"
+        }
+        return url.path
     }
 
     private var mainWorkspaceView: some View {
@@ -54,17 +151,9 @@ struct ContentView: View {
             }
 
             VStack(spacing: 0) {
-                EditorToolbar(
-                    toggleSidebar: { withAnimation { showSidebar.toggle() } },
-                    sidebarVisible: showSidebar,
-                    toggleChat: toggleChat,
-                    chatVisible: showChatSidebar
-                )
-                VStack(spacing: 0) {
-                    EditorTabBar()
-                    Divider()
-                    EditorSurface()
-                }
+                EditorTabBar()
+                Divider()
+                EditorSurface()
             }
             .frame(maxWidth: .infinity, maxHeight: .infinity)
             .background(Color.ideBackground)
@@ -97,56 +186,6 @@ struct ContentView: View {
         withAnimation(.easeInOut(duration: 0.25)) {
             showChatSidebar.toggle()
         }
-    }
-}
-
-private struct EditorToolbar: View {
-    @EnvironmentObject private var appModel: AppModel
-    let toggleSidebar: () -> Void
-    let sidebarVisible: Bool
-    let toggleChat: () -> Void
-    let chatVisible: Bool
-
-    var body: some View {
-        HStack(spacing: 8) {
-            Button(action: toggleSidebar) {
-                Image(systemName: "sidebar.leading")
-                    .foregroundStyle(sidebarVisible ? .primary : .secondary)
-                    .padding(6)
-                    .background(
-                        RoundedRectangle(cornerRadius: 6, style: .continuous)
-                            .fill(sidebarVisible ? Color.primary.opacity(0.08) : Color.clear)
-                    )
-            }
-            .buttonStyle(.plain)
-            .keyboardShortcut("s", modifiers: [.command])
-
-            CommandBar(path: currentPath)
-                .frame(height: 26)
-
-            Button(action: toggleChat) {
-                Label("Chat", systemImage: "bubble.left.fill")
-                    .labelStyle(.titleAndIcon)
-                    .padding(.horizontal, 10)
-                    .padding(.vertical, 6)
-                    .frame(minWidth: 80)
-                    .background(
-                        RoundedRectangle(cornerRadius: 8, style: .continuous)
-                            .fill(chatVisible ? Color.ideAccent.opacity(0.2) : Color.secondary.opacity(0.15))
-                    )
-            }
-            .buttonStyle(.plain)
-        }
-        .padding(.horizontal, 12)
-        .padding(.vertical, 6)
-        .background(Color.ideBackground)
-    }
-
-    private var currentPath: String {
-        guard let url = appModel.selectedFileURL ?? appModel.workspaceURL else {
-            return "No file open"
-        }
-        return url.path
     }
 }
 
@@ -237,6 +276,36 @@ private struct CommandBarTextField: NSViewRepresentable {
             DispatchQueue.main.async {
                 blurTrigger = false
             }
+        }
+    }
+}
+
+private struct ContentWidthPreferenceKey: PreferenceKey {
+    static var defaultValue: CGFloat = 0
+    static func reduce(value: inout CGFloat, nextValue: () -> CGFloat) {
+        value = nextValue()
+    }
+}
+
+private struct WidthObserver: View {
+    @Binding var width: CGFloat
+
+    var body: some View {
+        GeometryReader { proxy in
+            Color.clear
+                .onAppear { width = proxy.size.width }
+                .onChange(of: proxy.size.width) { width = $0 }
+        }
+    }
+}
+
+private extension View {
+    @ViewBuilder
+    func commandBarWidth(_ width: CGFloat?) -> some View {
+        if let width, width > 0 {
+            frame(width: width)
+        } else {
+            self
         }
     }
 }

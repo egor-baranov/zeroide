@@ -9,6 +9,7 @@ struct ID3App: App {
             ContentView()
                 .environmentObject(appModel)
         }
+        .windowToolbarStyle(.unifiedCompact)
         .commands {
             CommandGroup(after: .newItem) {
                 Button("Open Folder...") {
