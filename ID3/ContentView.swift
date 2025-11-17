@@ -600,16 +600,11 @@ private struct EditorWorkspaceView: View {
 private struct PaneContainer: View {
     @EnvironmentObject private var appModel: AppModel
     let pane: EditorPane
-    @State private var isSplitLeftTarget = false
-    @State private var isSplitRightTarget = false
-    @State private var isCenterTarget = false
     @State private var isTabBarDropTarget = false
+    @State private var hoveredSplitRegion: SplitDropRegion?
     private let paneDropTypes: [UTType] = [.plainText, .fileURL, .url]
-    private let splitDropTypes: [UTType] = [.plainText, .fileURL, .url]
-    private let centerSplitTopInset: CGFloat = 36
-    private let sideSplitTopInset: CGFloat = 0
     private var isCenterHighlightActive: Bool {
-        isCenterTarget || isTabBarDropTarget
+        hoveredSplitRegion == .center || isTabBarDropTarget
     }
 
     var body: some View {
@@ -619,54 +614,30 @@ private struct PaneContainer: View {
             }
             Divider()
             ZStack(alignment: .top) {
-                EditorSurface(pane: pane)
-                    .overlay(
-                        RoundedRectangle(cornerRadius: 12, style: .continuous)
-                            .stroke(Color.ideAccent, lineWidth: 2)
-                            .opacity(isCenterHighlightActive ? 0.6 : 0)
-                            .animation(.easeInOut(duration: 0.2), value: isCenterHighlightActive)
-                            .allowsHitTesting(false)
-                    )
-
                 GeometryReader { geo in
-                    let width = geo.size.width
-                    let height = geo.size.height
-                    let leftWidth = width * 0.3
-                    let centerWidth = width * 0.4
-                    let rightWidth = width * 0.3
-                    let centerHeight = max(height - centerSplitTopInset, 0)
-                    let sideHeight = max(height - sideSplitTopInset, 0)
-
-                    ZStack(alignment: .topLeading) {
-                        splitZone(width: leftWidth,
-                                  height: sideHeight,
-                                  isTargeted: $isSplitLeftTarget,
-                                  dropTypes: splitDropTypes,
-                                  action: { providers in
-                                      appModel.handleDropIntoNewPaneBefore(providers, before: pane)
-                                  })
-                        .offset(x: 0, y: sideSplitTopInset)
-
-                        splitZone(width: centerWidth,
-                                  height: centerHeight,
-                                  isTargeted: $isCenterTarget,
-                                  dropTypes: paneDropTypes,
-                                  action: { providers in
-                                      appModel.handleDrop(providers, into: pane)
-                                  },
-                                  showsHighlight: false)
-                        .offset(x: leftWidth, y: centerSplitTopInset)
-
-                        splitZone(width: rightWidth,
-                                  height: sideHeight,
-                                  isTargeted: $isSplitRightTarget,
-                                  dropTypes: splitDropTypes,
-                                  action: { providers in
-                                      appModel.handleDropIntoNewPane(providers, after: pane)
-                                  })
-                        .offset(x: leftWidth + centerWidth, y: sideSplitTopInset)
-                    }
-                    .frame(maxWidth: .infinity, maxHeight: .infinity, alignment: .topLeading)
+                    let size = geo.size
+                    EditorSurface(pane: pane)
+                        .overlay(
+                            RoundedRectangle(cornerRadius: 12, style: .continuous)
+                                .stroke(Color.ideAccent, lineWidth: 2)
+                                .opacity(isCenterHighlightActive ? 0.6 : 0)
+                                .animation(.easeInOut(duration: 0.2), value: isCenterHighlightActive)
+                                .allowsHitTesting(false)
+                        )
+                        .overlay(
+                            SplitDropOverlay(region: hoveredSplitRegion, size: size)
+                                .allowsHitTesting(false)
+                        )
+                        .onDrop(
+                            of: paneDropTypes,
+                            delegate: PaneSplitDropDelegate(
+                                pane: pane,
+                                geometry: size,
+                                hoveredRegion: $hoveredSplitRegion,
+                                appModel: appModel,
+                                dropTypes: paneDropTypes
+                            )
+                        )
                 }
             }
         }
@@ -678,30 +649,6 @@ private struct PaneContainer: View {
         )
     }
 
-    private func splitZone(width: CGFloat,
-                           height: CGFloat,
-                           isTargeted: Binding<Bool>,
-                           dropTypes: [UTType],
-                           action: @escaping ([NSItemProvider]) -> Bool,
-                           allowsInteraction: Bool = true,
-                           showsHighlight: Bool = true) -> some View {
-        Rectangle()
-            .fill(Color.clear)
-            .frame(width: width, height: height)
-            .overlay(
-                Group {
-                    if showsHighlight {
-                        RoundedRectangle(cornerRadius: 10, style: .continuous)
-                            .stroke(Color.ideAccent, lineWidth: 2)
-                            .opacity(isTargeted.wrappedValue ? 0.6 : 0)
-                            .animation(.easeInOut(duration: 0.2), value: isTargeted.wrappedValue)
-                    }
-                }
-            )
-            .contentShape(Rectangle())
-            .allowsHitTesting(allowsInteraction)
-            .onDrop(of: dropTypes, isTargeted: isTargeted, perform: action)
-    }
 }
 
 private struct PaneResizeHandle: View {
@@ -747,6 +694,108 @@ private struct PaneResizeHandle: View {
                     NSCursor.arrow.set()
                 }
             }
+    }
+}
+
+private enum SplitDropRegion {
+    case left, center, right
+}
+
+private struct SplitDropOverlay: View {
+    let region: SplitDropRegion?
+    let size: CGSize
+
+    var body: some View {
+        GeometryReader { geo in
+            let width = geo.size.width
+            let height = geo.size.height
+            Group {
+                if region == .left {
+                    highlightedRect(width: width * 0.3, height: height)
+                } else if region == .center {
+                    highlightedRect(width: width * 0.4, height: height)
+                        .offset(x: width * 0.3)
+                } else if region == .right {
+                    highlightedRect(width: width * 0.3, height: height)
+                        .offset(x: width * 0.7)
+                }
+            }
+        }
+    }
+
+    private func highlightedRect(width: CGFloat, height: CGFloat) -> some View {
+        RoundedRectangle(cornerRadius: 12, style: .continuous)
+            .stroke(Color.ideAccent, lineWidth: 2)
+            .background(
+                RoundedRectangle(cornerRadius: 12, style: .continuous)
+                    .fill(Color.ideAccent.opacity(0.1))
+            )
+            .frame(width: width, height: height)
+            .animation(.easeInOut(duration: 0.2), value: region)
+    }
+}
+
+private struct PaneSplitDropDelegate: DropDelegate {
+    let pane: EditorPane
+    let geometry: CGSize
+    @Binding var hoveredRegion: SplitDropRegion?
+    let appModel: AppModel
+    let dropTypes: [UTType]
+
+    func validateDrop(info: DropInfo) -> Bool {
+        !info.itemProviders(for: dropTypes).isEmpty
+    }
+
+    func dropEntered(info: DropInfo) {
+        updateHover(with: info)
+    }
+
+    func dropUpdated(info: DropInfo) -> DropProposal? {
+        updateHover(with: info)
+        return nil
+    }
+
+    func dropExited(info: DropInfo) {
+        DispatchQueue.main.async {
+            hoveredRegion = nil
+        }
+    }
+
+    func performDrop(info: DropInfo) -> Bool {
+        let providers = info.itemProviders(for: dropTypes)
+        let region = region(for: info.location)
+        DispatchQueue.main.async {
+            hoveredRegion = nil
+        }
+        guard !providers.isEmpty else { return false }
+        switch region {
+        case .left:
+            return appModel.handleDropIntoNewPaneBefore(providers, before: pane)
+        case .center:
+            return appModel.handleDrop(providers, into: pane)
+        case .right:
+            return appModel.handleDropIntoNewPane(providers, after: pane)
+        }
+    }
+
+    private func region(for location: CGPoint) -> SplitDropRegion {
+        let width = max(geometry.width, 1)
+        let normalizedX = min(max(location.x, 0), width)
+        let fraction = normalizedX / width
+        if fraction < 0.3 {
+            return .left
+        } else if fraction > 0.7 {
+            return .right
+        } else {
+            return .center
+        }
+    }
+
+    private func updateHover(with info: DropInfo) {
+        let region = region(for: info.location)
+        DispatchQueue.main.async {
+            hoveredRegion = region
+        }
     }
 }
 

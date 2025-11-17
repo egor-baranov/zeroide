@@ -2,6 +2,7 @@ import SwiftUI
 
 struct ZeroWelcomeView: View {
     @EnvironmentObject private var appModel: AppModel
+    @State private var prompt: String = ""
 
     private var recentItems: [URL] {
         Array(appModel.recentWorkspaces.prefix(5))
@@ -9,14 +10,18 @@ struct ZeroWelcomeView: View {
 
     var body: some View {
         VStack(spacing: 32) {
-            VStack(spacing: 8) {
-                Text("ZERO")
-                    .font(.system(size: 28, weight: .black, design: .rounded))
-                    .kerning(2)
-                Text("Your AI-native IDE")
+            VStack(spacing: 12) {
+                Image("logo")
+                    .resizable()
+                    .aspectRatio(contentMode: .fit)
+                    .frame(width: 150)
+                Text("AI-native IDE for thoughtful builders")
                     .font(.subheadline)
                     .foregroundStyle(.secondary)
             }
+
+            PromptComposer(prompt: $prompt, submit: handlePromptSubmit)
+                .frame(maxWidth: 520)
 
             HStack(spacing: 16) {
                 ActionTile(icon: "folder", title: "Open project", action: appModel.presentWorkspacePicker)
@@ -76,6 +81,11 @@ struct ZeroWelcomeView: View {
         .frame(maxWidth: .infinity, maxHeight: .infinity)
         .background(Color.ideEditorBackground)
     }
+
+    private func handlePromptSubmit() {
+        guard !prompt.trimmingCharacters(in: .whitespacesAndNewlines).isEmpty else { return }
+        prompt = ""
+    }
 }
 
 private func displayPath(for url: URL) -> String {
@@ -85,6 +95,44 @@ private func displayPath(for url: URL) -> String {
         return path.replacingOccurrences(of: home, with: "~")
     }
     return path
+}
+
+private struct PromptComposer: View {
+    @Binding var prompt: String
+    let submit: () -> Void
+
+    var body: some View {
+        HStack(spacing: 12) {
+            Image(systemName: "sparkles")
+                .font(.system(size: 16, weight: .semibold))
+                .foregroundStyle(.secondary)
+
+            TextField("", text: $prompt, prompt: Text("Ask ZERO to open, create, or explain…").foregroundStyle(.secondary))
+                .textFieldStyle(.plain)
+                .font(.system(size: 16, weight: .medium))
+                .submitLabel(.send)
+                .onSubmit(submit)
+
+            Button(action: submit) {
+                Image(systemName: "arrow.up.circle.fill")
+                    .font(.system(size: 20, weight: .semibold))
+            }
+            .buttonStyle(.plain)
+            .disabled(prompt.trimmingCharacters(in: .whitespacesAndNewlines).isEmpty)
+            .foregroundColor(prompt.trimmingCharacters(in: .whitespacesAndNewlines).isEmpty ? .secondary : .accentColor)
+        }
+        .padding(.horizontal, 18)
+        .padding(.vertical, 14)
+        .background(
+            RoundedRectangle(cornerRadius: 28, style: .continuous)
+                .fill(Color.white.opacity(0.92))
+                .overlay(
+                    RoundedRectangle(cornerRadius: 28, style: .continuous)
+                        .stroke(Color.black.opacity(0.08), lineWidth: 1)
+                )
+                .shadow(color: .black.opacity(0.08), radius: 20, y: 8)
+        )
+    }
 }
 
 private struct ActionTile: View {

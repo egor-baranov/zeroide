@@ -21,6 +21,8 @@ struct EditorTabBar: View {
     @State private var tabWidths: [EditorTab.ID: CGFloat] = [:]
     @State private var availableWidth: CGFloat = 0
     @State private var isDropTarget = false
+    @State private var isTabDragActive = false
+    @State private var dragHoverCount = 0
     private let overflowThreshold: CGFloat = 280
 
     var body: some View {
@@ -30,12 +32,15 @@ struct EditorTabBar: View {
                     TabInsertTarget(
                         index: 0,
                         pane: pane,
-                        width: 120
-                    ) { identifier, idx, pane in
-                        withAnimation(.easeInOut(duration: 0.15)) {
-                            appModel.moveTab(withIdentifier: identifier, toIndex: idx, in: pane)
-                        }
-                    }
+                        width: 120,
+                        onDrop: { identifier, idx, pane in
+                            withAnimation(.easeInOut(duration: 0.15)) {
+                                appModel.moveTab(withIdentifier: identifier, toIndex: idx, in: pane)
+                            }
+                        },
+                        isDragActive: $isTabDragActive,
+                        dragStateChanged: handleTabDragHoverChange
+                    )
                     Spacer()
                 }
                 .frame(maxWidth: .infinity, maxHeight: .infinity)
@@ -43,20 +48,25 @@ struct EditorTabBar: View {
                 ScrollView(.horizontal, showsIndicators: false) {
                     ScrollViewReader { proxy in
                     HStack(spacing: 4) {
-                        TabInsertTarget(
-                            index: 0,
-                            pane: pane,
-                            width: averageTabWidth
-                        ) { id, idx, pane in
+                    TabInsertTarget(
+                        index: 0,
+                        pane: pane,
+                        width: averageTabWidth,
+                        onDrop: { id, idx, pane in
                             withAnimation(.easeInOut(duration: 0.2)) {
                                 appModel.moveTab(withIdentifier: id, toIndex: idx, in: pane)
                             }
-                        }
+                        },
+                        isDragActive: $isTabDragActive,
+                        dragStateChanged: handleTabDragHoverChange
+                    )
                         ForEach(Array(pane.tabs.enumerated()), id: \.element.id) { idx, tab in
                         TabDropWrapper(
                             pane: pane,
                             tabIndex: idx,
                             estimatedWidth: tabWidths[tab.id] ?? averageTabWidth,
+                            isDragActive: $isTabDragActive,
+                            dragStateChanged: handleTabDragHoverChange,
                             moveAction: { identifier, insertIndex, pane in
                                 withAnimation(.easeInOut(duration: 0.2)) {
                                     appModel.moveTab(withIdentifier: identifier, toIndex: insertIndex, in: pane)
@@ -73,15 +83,18 @@ struct EditorTabBar: View {
                         .onTapGesture {
                             appModel.activate(tab: tab)
                         }
-                            TabInsertTarget(
-                                index: idx + 1,
-                                pane: pane,
-                                width: tabWidths[tab.id] ?? averageTabWidth
-                            ) { identifier, insertIndex, pane in
+                        TabInsertTarget(
+                            index: idx + 1,
+                            pane: pane,
+                            width: tabWidths[tab.id] ?? averageTabWidth,
+                            onDrop: { identifier, insertIndex, pane in
                                 withAnimation(.easeInOut(duration: 0.2)) {
                                     appModel.moveTab(withIdentifier: identifier, toIndex: insertIndex, in: pane)
                                 }
-                            }
+                            },
+                            isDragActive: $isTabDragActive,
+                            dragStateChanged: handleTabDragHoverChange
+                        )
                         }
 
                         Rectangle()
@@ -153,6 +166,14 @@ private extension EditorTabBar {
         let total = tabWidths.values.reduce(CGFloat(0), +)
         return total / CGFloat(tabWidths.count)
     }
+
+    private func handleTabDragHoverChange(_ isActive: Bool) {
+        dragHoverCount = max(0, dragHoverCount + (isActive ? 1 : -1))
+        let active = dragHoverCount > 0
+        if active != isTabDragActive {
+            isTabDragActive = active
+        }
+    }
 }
 
 private struct TabBarAvailableWidthKey: PreferenceKey {
@@ -167,24 +188,28 @@ private struct TabInsertTarget: View {
     let pane: EditorPane
     let width: CGFloat
     let onDrop: (String, Int, EditorPane) -> Void
+    @Binding var isDragActive: Bool
+    let dragStateChanged: (Bool) -> Void
     @State private var isTargeted = false
-    @State private var hasEverBeenTargeted = false
 
     var body: some View {
         ZStack {
             if isTargeted {
                 RoundedRectangle(cornerRadius: 8, style: .continuous)
                     .fill(Color.accentColor.opacity(0.25))
-            } else {
+            } else if isDragActive {
                 Capsule()
                     .fill(Color.accentColor.opacity(0.25))
                     .frame(width: 4, height: 16)
                     .opacity(0.4)
+            } else {
+                Color.clear
             }
         }
         .frame(width: max(isTargeted ? width : 6, 6), height: 32)
-        .opacity(isTargeted ? 1 : (hasEverBeenTargeted ? 0.4 : 0))
+        .opacity(isTargeted ? 1 : (isDragActive ? 0.4 : 0))
         .animation(.easeInOut(duration: 0.15), value: isTargeted)
+        .animation(.easeInOut(duration: 0.15), value: isDragActive)
         .contentShape(Rectangle())
         .onDrop(of: [.plainText], isTargeted: $isTargeted) { providers in
             guard let provider = providers.first(where: { $0.canLoadObject(ofClass: NSString.self) }) else {
@@ -199,10 +224,8 @@ private struct TabInsertTarget: View {
             }
             return true
         }
-        .onChange(of: isTargeted) { newValue in
-            if newValue {
-                hasEverBeenTargeted = true
-            }
+        .onChange(of: isTargeted) { active in
+            dragStateChanged(active)
         }
     }
 }
@@ -223,6 +246,8 @@ private struct TabDropWrapper<Content: View>: View {
     let pane: EditorPane
     let tabIndex: Int
     let estimatedWidth: CGFloat
+    @Binding var isDragActive: Bool
+    let dragStateChanged: (Bool) -> Void
     let moveAction: (String, Int, EditorPane) -> Void
     @ViewBuilder var content: () -> Content
     @State private var hoverSide: TabHoverSide?
@@ -232,12 +257,16 @@ private struct TabDropWrapper<Content: View>: View {
         pane: EditorPane,
         tabIndex: Int,
         estimatedWidth: CGFloat,
+        isDragActive: Binding<Bool>,
+        dragStateChanged: @escaping (Bool) -> Void,
         moveAction: @escaping (String, Int, EditorPane) -> Void,
         @ViewBuilder content: @escaping () -> Content
     ) {
         self.pane = pane
         self.tabIndex = tabIndex
         self.estimatedWidth = estimatedWidth
+        self._isDragActive = isDragActive
+        self.dragStateChanged = dragStateChanged
         self.moveAction = moveAction
         self.content = content
         _viewWidth = State(initialValue: estimatedWidth)
@@ -275,10 +304,14 @@ private struct TabDropWrapper<Content: View>: View {
                 moveAction: moveAction
             )
         )
+        .onChange(of: hoverSide != nil) { isHovering in
+            dragStateChanged(isHovering)
+        }
     }
 
     private var placeholderWidth: CGFloat {
-        max(min(viewWidth, 180), 80)
+        guard isDragActive, hoverSide != nil else { return 0 }
+        return max(min(viewWidth, 180), 80)
     }
 }
 
@@ -503,109 +536,49 @@ struct StartTabView: View {
     var addTabAction: () -> Void
     var openWorkspaceAction: () -> Void
 
-    private var cardColor: Color {
-        colorScheme == .dark ? Color.white.opacity(0.08) : Color.white
-    }
-
-    private var backdrop: LinearGradient {
-        let top = colorScheme == .dark ? Color.black.opacity(0.75) : Color.white.opacity(0.95)
-        let bottom = colorScheme == .dark ? Color.black.opacity(0.9) : Color.white
-        return LinearGradient(colors: [top, bottom], startPoint: .top, endPoint: .bottom)
-    }
-
     var body: some View {
         ZStack {
-            backdrop
-                .ignoresSafeArea()
+            LinearGradient(
+                colors: [
+                    Color.ideEditorBackground,
+                    Color.ideEditorBackground.opacity(colorScheme == .dark ? 0.4 : 0.9)
+                ],
+                startPoint: .topLeading,
+                endPoint: .bottomTrailing
+            )
+            .ignoresSafeArea()
 
-            VStack(spacing: 24) {
-                Spacer(minLength: 40)
+            VStack(spacing: 28) {
+                Spacer(minLength: 60)
 
-                Circle()
-                    .fill(Color.gray.opacity(0.15))
-                    .frame(width: 64, height: 64)
-                    .overlay(
-                        Image(systemName: "bolt.fill")
-                            .font(.system(size: 28, weight: .semibold))
-                            .foregroundStyle(Color.ideAccent)
-                    )
+                Image("logo")
+                    .resizable()
+                    .scaledToFit()
+                    .frame(width: 160)
+                    .shadow(color: .black.opacity(colorScheme == .dark ? 0.4 : 0.08), radius: 16, y: 6)
 
-                VStack(spacing: 0) {
-                    HStack(spacing: 12) {
-                        Image(systemName: "magnifyingglass")
-                            .foregroundStyle(.secondary)
-                        TextField("Ask changes about project…", text: $query)
-                            .textFieldStyle(.plain)
-                            .font(.system(size: 16))
-                            .onSubmit(handleQuerySubmit)
-                        Button(action: {}) {
-                            Image(systemName: "mic.fill")
-                        }
-                        .buttonStyle(.plain)
-                        .foregroundStyle(.secondary)
-                        Button(action: handleQuerySubmit) {
-                            Image(systemName: "arrow.up")
-                        }
-                        .buttonStyle(.plain)
-                        .foregroundStyle(.secondary)
+                Text("Ask ZERO to open files, run commands or sketch ideas.")
+                    .font(.system(size: 16, weight: .medium))
+                    .foregroundStyle(.secondary)
+
+                StartPromptComposer(text: $query, onSubmit: handleQuerySubmit)
+                    .padding(.horizontal, 60)
+
+                HStack(spacing: 16) {
+                    StartActionPill(label: "Open workspace", systemImage: "folder") {
+                        openWorkspaceAction()
                     }
-                    .padding(.horizontal, 20)
-                    .padding(.vertical, 16)
-
-                    Divider()
-
-                    HStack(spacing: 12) {
-                        Button(action: openWorkspaceAction) {
-                            Label("Add tabs or files", systemImage: "plus")
-                                .labelStyle(.titleAndIcon)
-                        }
-                        .buttonStyle(.plain)
-                        .padding(.horizontal, 14)
-                        .padding(.vertical, 8)
-                        .background(
-                            RoundedRectangle(cornerRadius: 999)
-                                .fill(Color.secondary.opacity(0.15))
-                        )
-
-                        Button(action: {}) {
-                            Image(systemName: "ellipsis")
-                                .font(.system(size: 16, weight: .semibold))
-                        }
-                        .buttonStyle(.plain)
-                        .padding(8)
-                        .background(
-                            Circle().fill(Color.secondary.opacity(0.15))
-                        )
-
-                        Spacer()
+                    StartActionPill(label: "New canvas", systemImage: "sparkles") {
+                        addTabAction()
                     }
-                    .padding(.horizontal, 20)
-                    .padding(.vertical, 12)
-                }
-                .background(
-                    RoundedRectangle(cornerRadius: 26, style: .continuous)
-                        .fill(cardColor)
-                        .shadow(color: Color.black.opacity(colorScheme == .dark ? 0.45 : 0.08), radius: 30, x: 0, y: 25)
-                )
-                .padding(.horizontal, 40)
-
-                HStack(spacing: 12) {
-                    StartQuickAction(
-                        label: "Skills",
-                        systemImage: "bolt.fill",
-                        action: addTabAction
-                    )
-                    StartQuickAction(
-                        label: "Learn Skills",
-                        systemImage: "graduationcap.fill",
-                        action: {}
-                    )
+                    StartActionPill(label: "Recent files", systemImage: "clock.arrow.circlepath") {
+                        appModel.activateNextTab()
+                    }
                 }
 
                 Spacer()
             }
-            .padding(.horizontal, 60)
-            .frame(maxWidth: .infinity, maxHeight: .infinity) 
+            .frame(maxWidth: .infinity, maxHeight: .infinity)
         }
     }
 
@@ -624,7 +597,56 @@ struct StartTabView: View {
     }
 }
 
-private struct StartQuickAction: View {
+private struct StartPromptComposer: View {
+    @Binding var text: String
+    let onSubmit: () -> Void
+
+    private var isDisabled: Bool {
+        text.trimmingCharacters(in: .whitespacesAndNewlines).isEmpty
+    }
+
+    var body: some View {
+        HStack(spacing: 12) {
+            Image(systemName: "sparkles")
+                .font(.system(size: 16, weight: .semibold))
+                .foregroundStyle(.secondary)
+
+            TextField(
+                "",
+                text: $text,
+                prompt: Text("Type instructions or paste a link…")
+                    .foregroundStyle(.secondary)
+            )
+            .textFieldStyle(.plain)
+            .font(.system(size: 17, weight: .medium))
+            .submitLabel(.send)
+            .onSubmit(onSubmit)
+
+            Button(action: onSubmit) {
+                Image(systemName: "arrow.up.circle.fill")
+                    .font(.system(size: 22, weight: .semibold))
+                    .foregroundColor(isDisabled ? .secondary : .accentColor)
+            }
+            .buttonStyle(.plain)
+            .disabled(isDisabled)
+        }
+        .padding(.horizontal, 20)
+        .padding(.vertical, 16)
+        .background(
+            RoundedRectangle(cornerRadius: 34, style: .continuous)
+                .fill(Color.white.opacity(colorScheme == .dark ? 0.08 : 0.95))
+                .overlay(
+                    RoundedRectangle(cornerRadius: 34, style: .continuous)
+                        .stroke(Color.black.opacity(colorScheme == .dark ? 0.2 : 0.08), lineWidth: 1)
+                )
+                .shadow(color: .black.opacity(colorScheme == .dark ? 0.45 : 0.08), radius: 20, y: 8)
+        )
+    }
+
+    @Environment(\.colorScheme) private var colorScheme
+}
+
+private struct StartActionPill: View {
     let label: String
     let systemImage: String
     var action: () -> Void
@@ -637,7 +659,10 @@ private struct StartQuickAction: View {
                 .padding(.vertical, 10)
                 .background(
                     Capsule(style: .continuous)
-                        .fill(Color.secondary.opacity(0.2))
+                        .fill(Color.white.opacity(0.15))
+                        .overlay(
+                            Capsule().stroke(Color.white.opacity(0.25), lineWidth: 1)
+                        )
                 )
         }
         .buttonStyle(.plain)
