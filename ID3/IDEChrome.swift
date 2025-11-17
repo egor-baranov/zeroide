@@ -157,27 +157,42 @@ private struct TabInsertTarget: View {
     let width: CGFloat
     let onDrop: (String, Int, EditorPane) -> Void
     @State private var isTargeted = false
+    @State private var hasEverBeenTargeted = false
 
     var body: some View {
-        RoundedRectangle(cornerRadius: 8, style: .continuous)
-            .stroke(Color.ideAccent, lineWidth: isTargeted ? 2 : 0)
-            .frame(width: max(isTargeted ? width : 6, 6), height: 32)
-            .opacity(isTargeted ? 0.8 : 0)
-            .animation(.easeInOut(duration: 0.15), value: isTargeted)
-            .contentShape(Rectangle())
-            .onDrop(of: [.plainText], isTargeted: $isTargeted) { providers in
-                guard let provider = providers.first(where: { $0.canLoadObject(ofClass: NSString.self) }) else {
-                    return false
-                }
-                provider.loadObject(ofClass: NSString.self) { object, _ in
-                    guard let nsString = object as? NSString else { return }
-                    let identifier = nsString as String
-                    DispatchQueue.main.async {
-                        onDrop(identifier, index, pane)
-                    }
-                }
-                return true
+        ZStack {
+            if isTargeted {
+                RoundedRectangle(cornerRadius: 8, style: .continuous)
+                    .fill(Color.accentColor.opacity(0.25))
+            } else {
+                Capsule()
+                    .fill(Color.accentColor.opacity(0.25))
+                    .frame(width: 4, height: 16)
+                    .opacity(0.4)
             }
+        }
+        .frame(width: max(isTargeted ? width : 6, 6), height: 32)
+        .opacity(isTargeted ? 1 : (hasEverBeenTargeted ? 0.4 : 0))
+        .animation(.easeInOut(duration: 0.15), value: isTargeted)
+        .contentShape(Rectangle())
+        .onDrop(of: [.plainText], isTargeted: $isTargeted) { providers in
+            guard let provider = providers.first(where: { $0.canLoadObject(ofClass: NSString.self) }) else {
+                return false
+            }
+            provider.loadObject(ofClass: NSString.self) { object, _ in
+                guard let nsString = object as? NSString else { return }
+                let identifier = nsString as String
+                DispatchQueue.main.async {
+                    onDrop(identifier, index, pane)
+                    }
+            }
+            return true
+        }
+        .onChange(of: isTargeted) { newValue in
+            if newValue {
+                hasEverBeenTargeted = true
+            }
+        }
     }
 }
 
