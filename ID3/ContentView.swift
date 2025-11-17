@@ -439,7 +439,9 @@ private struct PaneContainer: View {
 
     var body: some View {
         VStack(spacing: 0) {
-            EditorTabBar(pane: pane)
+            EditorTabBar(pane: pane, onTargetChange: { isTargeted in
+                isPaneTarget = isTargeted
+            })
             Divider()
             EditorSurface(pane: pane)
         }
@@ -460,13 +462,9 @@ private struct PaneContainer: View {
                                       appModel.handleDropIntoNewPaneBefore(providers, before: pane)
                                   })
 
-                        Rectangle()
-                            .fill(Color.clear)
+                        Color.clear
                             .frame(width: geo.size.width * 0.4)
-                            .contentShape(Rectangle())
-                            .onDrop(of: dropTypes, isTargeted: $isPaneTarget) { providers in
-                                appModel.handleDrop(providers, into: pane)
-                            }
+                            .allowsHitTesting(false)
 
                         splitZone(width: geo.size.width * 0.3,
                                   isTargeted: $isSplitRightTarget,

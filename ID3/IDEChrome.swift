@@ -17,6 +17,7 @@ struct IDEWindowToolbar: View {
 struct EditorTabBar: View {
     @EnvironmentObject private var appModel: AppModel
     let pane: EditorPane
+    var onTargetChange: (Bool) -> Void = { _ in }
     @State private var draggingTab: EditorTab?
     @State private var dragTranslation: CGFloat = 0
     @State private var tabWidths: [EditorTab.ID: CGFloat] = [:]
@@ -99,15 +100,11 @@ struct EditorTabBar: View {
         .padding(.horizontal, 8)
         .padding(.vertical, 2)
         .background(Color.ideBackground)
-        .overlay(alignment: .center) {
-            RoundedRectangle(cornerRadius: 8, style: .continuous)
-                .stroke(Color.ideAccent, lineWidth: 2)
-                .padding(2)
-                .opacity(isDropTarget ? 0.6 : 0)
-                .animation(.easeInOut(duration: 0.2), value: isDropTarget)
-        }
         .onDrop(of: [UTType.plainText, .fileURL, .url], isTargeted: $isDropTarget) { providers in
             appModel.handleDrop(providers, into: pane)
+        }
+        .onChange(of: isDropTarget) { value in
+            onTargetChange(value)
         }
     }
 }
@@ -245,6 +242,19 @@ private struct EditorTabChip: View {
             Button("Split Right") {
                 appModel.splitTabIntoNewPane(tab)
             }
+        }
+        .onDrop(of: [.plainText], isTargeted: nil) { providers in
+            guard let provider = providers.first(where: { $0.canLoadObject(ofClass: NSString.self) }) else {
+                return false
+            }
+            provider.loadObject(ofClass: NSString.self) { object, _ in
+                guard let nsString = object as? NSString else { return }
+                let identifier = nsString as String
+                DispatchQueue.main.async {
+                    appModel.moveTab(withIdentifier: identifier, before: tab)
+                }
+            }
+            return true
         }
     }
 
