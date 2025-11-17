@@ -53,15 +53,26 @@ struct EditorTabBar: View {
                             }
                         }
                         ForEach(Array(pane.tabs.enumerated()), id: \.element.id) { idx, tab in
+                        TabDropWrapper(
+                            pane: pane,
+                            tabIndex: idx,
+                            estimatedWidth: tabWidths[tab.id] ?? averageTabWidth,
+                            moveAction: { identifier, insertIndex, pane in
+                                withAnimation(.easeInOut(duration: 0.2)) {
+                                    appModel.moveTab(withIdentifier: identifier, toIndex: insertIndex, in: pane)
+                                }
+                            }
+                        ) {
                             EditorTabChip(
                                 tab: tab,
                                 isActive: pane.activeTabID == tab.id,
                                 closeAction: { appModel.closeTab(tab) }
                             )
-                            .id(tab.id)
-                            .onTapGesture {
-                                appModel.activate(tab: tab)
-                            }
+                        }
+                        .id(tab.id)
+                        .onTapGesture {
+                            appModel.activate(tab: tab)
+                        }
                             TabInsertTarget(
                                 index: idx + 1,
                                 pane: pane,
@@ -192,6 +203,139 @@ private struct TabInsertTarget: View {
             if newValue {
                 hasEverBeenTargeted = true
             }
+        }
+    }
+}
+
+private struct TabPlaceholderGhost: View {
+    var body: some View {
+        RoundedRectangle(cornerRadius: 8, style: .continuous)
+            .fill(Color.accentColor.opacity(0.25))
+    }
+}
+
+private enum TabHoverSide {
+    case left
+    case right
+}
+
+private struct TabDropWrapper<Content: View>: View {
+    let pane: EditorPane
+    let tabIndex: Int
+    let estimatedWidth: CGFloat
+    let moveAction: (String, Int, EditorPane) -> Void
+    @ViewBuilder var content: () -> Content
+    @State private var hoverSide: TabHoverSide?
+    @State private var viewWidth: CGFloat
+
+    init(
+        pane: EditorPane,
+        tabIndex: Int,
+        estimatedWidth: CGFloat,
+        moveAction: @escaping (String, Int, EditorPane) -> Void,
+        @ViewBuilder content: @escaping () -> Content
+    ) {
+        self.pane = pane
+        self.tabIndex = tabIndex
+        self.estimatedWidth = estimatedWidth
+        self.moveAction = moveAction
+        self.content = content
+        _viewWidth = State(initialValue: estimatedWidth)
+    }
+
+    var body: some View {
+        HStack(spacing: 0) {
+            if hoverSide == .left {
+                TabPlaceholderGhost()
+                    .frame(width: placeholderWidth, height: 32)
+            }
+
+            content()
+                .background(
+                    GeometryReader { proxy in
+                        Color.clear
+                            .onAppear { viewWidth = proxy.size.width }
+                            .onChange(of: proxy.size.width) { viewWidth = $0 }
+                    }
+                )
+
+            if hoverSide == .right {
+                TabPlaceholderGhost()
+                    .frame(width: placeholderWidth, height: 32)
+            }
+        }
+        .animation(.easeInOut(duration: 0.15), value: hoverSide != nil)
+        .onDrop(
+            of: [.plainText],
+            delegate: TabHoverDropDelegate(
+                pane: pane,
+                tabIndex: tabIndex,
+                tabWidth: max(viewWidth, 1),
+                hoverSide: $hoverSide,
+                moveAction: moveAction
+            )
+        )
+    }
+
+    private var placeholderWidth: CGFloat {
+        max(min(viewWidth, 180), 80)
+    }
+}
+
+private struct TabHoverDropDelegate: DropDelegate {
+    let pane: EditorPane
+    let tabIndex: Int
+    let tabWidth: CGFloat
+    @Binding var hoverSide: TabHoverSide?
+    let moveAction: (String, Int, EditorPane) -> Void
+
+    func validateDrop(info: DropInfo) -> Bool {
+        info.hasItemsConforming(to: [.plainText])
+    }
+
+    func dropEntered(info: DropInfo) {
+        updateHoverSide(for: info)
+    }
+
+    func dropUpdated(info: DropInfo) -> DropProposal? {
+        updateHoverSide(for: info)
+        return nil
+    }
+
+    func dropExited(info: DropInfo) {
+        DispatchQueue.main.async {
+            hoverSide = nil
+        }
+    }
+
+    func performDrop(info: DropInfo) -> Bool {
+        let side = determineSide(for: info)
+        DispatchQueue.main.async {
+            hoverSide = nil
+        }
+        guard let provider = info.itemProviders(for: [.plainText]).first else {
+            return false
+        }
+        provider.loadObject(ofClass: NSString.self) { object, _ in
+            guard let nsString = object as? NSString else { return }
+            let identifier = nsString as String
+            DispatchQueue.main.async {
+                let insertionIndex = side == .left ? tabIndex : tabIndex + 1
+                moveAction(identifier, insertionIndex, pane)
+            }
+        }
+        return true
+    }
+
+    private func determineSide(for info: DropInfo) -> TabHoverSide {
+        let mid = tabWidth / 2
+        return info.location.x < mid ? .left : .right
+    }
+
+    private func updateHoverSide(for info: DropInfo) {
+        let side = determineSide(for: info)
+        DispatchQueue.main.async {
+            hoverSide = side
         }
     }
 }
