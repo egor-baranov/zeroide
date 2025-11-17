@@ -18,10 +18,7 @@ struct EditorTabBar: View {
     @EnvironmentObject private var appModel: AppModel
     let pane: EditorPane
     var onTargetChange: (Bool) -> Void = { _ in }
-    @State private var draggingTab: EditorTab?
-    @State private var dragTranslation: CGFloat = 0
     @State private var tabWidths: [EditorTab.ID: CGFloat] = [:]
-    @State private var lastReorderTranslation: CGFloat = 0
     @State private var availableWidth: CGFloat = 0
     @State private var isDropTarget = false
     private let overflowThreshold: CGFloat = 280
@@ -30,28 +27,50 @@ struct EditorTabBar: View {
         HStack(spacing: 8) {
             if pane.tabs.isEmpty {
                 HStack {
-                    Text("")
-                        .foregroundStyle(.secondary)
+                    TabInsertTarget(
+                        index: 0,
+                        pane: pane,
+                        width: 120
+                    ) { identifier, idx, pane in
+                        withAnimation(.easeInOut(duration: 0.15)) {
+                            appModel.moveTab(withIdentifier: identifier, toIndex: idx, in: pane)
+                        }
+                    }
                     Spacer()
                 }
-                .frame(maxWidth: .infinity)
+                .frame(maxWidth: .infinity, maxHeight: .infinity)
             } else {
                 ScrollView(.horizontal, showsIndicators: false) {
                     ScrollViewReader { proxy in
                     HStack(spacing: 4) {
-                        ForEach(pane.tabs) { tab in
+                        TabInsertTarget(
+                            index: 0,
+                            pane: pane,
+                            width: averageTabWidth
+                        ) { id, idx, pane in
+                            withAnimation(.easeInOut(duration: 0.2)) {
+                                appModel.moveTab(withIdentifier: id, toIndex: idx, in: pane)
+                            }
+                        }
+                        ForEach(Array(pane.tabs.enumerated()), id: \.element.id) { idx, tab in
                             EditorTabChip(
                                 tab: tab,
                                 isActive: pane.activeTabID == tab.id,
                                 closeAction: { appModel.closeTab(tab) }
                             )
                             .id(tab.id)
-                            .zIndex(draggingTab == tab ? 1 : 0)
-                            .offset(x: draggingTab == tab ? dragTranslation : 0)
                             .onTapGesture {
                                 appModel.activate(tab: tab)
                             }
-                            .gesture(dragGesture(for: tab, in: pane))
+                            TabInsertTarget(
+                                index: idx + 1,
+                                pane: pane,
+                                width: tabWidths[tab.id] ?? averageTabWidth
+                            ) { identifier, insertIndex, pane in
+                                withAnimation(.easeInOut(duration: 0.2)) {
+                                    appModel.moveTab(withIdentifier: identifier, toIndex: insertIndex, in: pane)
+                                }
+                            }
                         }
 
                         Rectangle()
@@ -117,12 +136,48 @@ private extension EditorTabBar {
         let reservedRight: CGFloat = 64 // plus + overflow controls
         return totalNeeded > max(availableWidth - reservedRight, 0)
     }
+
+    var averageTabWidth: CGFloat {
+        guard !tabWidths.isEmpty else { return 120 }
+        let total = tabWidths.values.reduce(CGFloat(0), +)
+        return total / CGFloat(tabWidths.count)
+    }
 }
 
 private struct TabBarAvailableWidthKey: PreferenceKey {
     static var defaultValue: CGFloat = 0
     static func reduce(value: inout CGFloat, nextValue: () -> CGFloat) {
         value = nextValue()
+    }
+}
+
+private struct TabInsertTarget: View {
+    let index: Int
+    let pane: EditorPane
+    let width: CGFloat
+    let onDrop: (String, Int, EditorPane) -> Void
+    @State private var isTargeted = false
+
+    var body: some View {
+        RoundedRectangle(cornerRadius: 8, style: .continuous)
+            .stroke(Color.ideAccent, lineWidth: isTargeted ? 2 : 0)
+            .frame(width: max(isTargeted ? width : 6, 6), height: 32)
+            .opacity(isTargeted ? 0.8 : 0)
+            .animation(.easeInOut(duration: 0.15), value: isTargeted)
+            .contentShape(Rectangle())
+            .onDrop(of: [.plainText], isTargeted: $isTargeted) { providers in
+                guard let provider = providers.first(where: { $0.canLoadObject(ofClass: NSString.self) }) else {
+                    return false
+                }
+                provider.loadObject(ofClass: NSString.self) { object, _ in
+                    guard let nsString = object as? NSString else { return }
+                    let identifier = nsString as String
+                    DispatchQueue.main.async {
+                        onDrop(identifier, index, pane)
+                    }
+                }
+                return true
+            }
     }
 }
 
@@ -242,19 +297,6 @@ private struct EditorTabChip: View {
             Button("Split Right") {
                 appModel.splitTabIntoNewPane(tab)
             }
-        }
-        .onDrop(of: [.plainText], isTargeted: nil) { providers in
-            guard let provider = providers.first(where: { $0.canLoadObject(ofClass: NSString.self) }) else {
-                return false
-            }
-            provider.loadObject(ofClass: NSString.self) { object, _ in
-                guard let nsString = object as? NSString else { return }
-                let identifier = nsString as String
-                DispatchQueue.main.async {
-                    appModel.moveTab(withIdentifier: identifier, before: tab)
-                }
-            }
-            return true
         }
     }
 
@@ -463,37 +505,6 @@ extension Color {
     static let ideSidebar = Color(nsColor: NSColor.controlBackgroundColor)
     static let ideEditorBackground = Color(nsColor: NSColor.textBackgroundColor)
     static let ideAccent = Color(nsColor: NSColor.systemBlue)
-}
-
-private extension EditorTabBar {
-    func dragGesture(for tab: EditorTab, in pane: EditorPane) -> some Gesture {
-        DragGesture(minimumDistance: 4)
-            .onChanged { value in
-                if draggingTab != tab {
-                    draggingTab = tab
-                }
-                dragTranslation = value.translation.width
-            }
-            .onEnded { value in
-                handleDragEnd(for: tab, translation: value.translation.width)
-                draggingTab = nil
-                dragTranslation = 0
-            }
-    }
-
-    func handleDragEnd(for tab: EditorTab, translation: CGFloat) {
-        guard let paneIndex = appModel.paneIndex(containing: tab),
-              let startIndex = appModel.panes[paneIndex].tabs.firstIndex(of: tab) else { return }
-        let tabWidth = tabWidths[tab.id] ?? 120
-        let step = max(tabWidth + 4, 60)
-        let offset = Int((translation / step).rounded())
-        let destination = max(0, min(appModel.panes[paneIndex].tabs.count - 1, startIndex + offset))
-        appModel.moveTab(tab, to: destination, in: appModel.panes[paneIndex])
-    }
-
-    func handleDrop(_ providers: [NSItemProvider], into pane: EditorPane) -> Bool {
-        appModel.handleDrop(providers, into: pane)
-    }
 }
 
 private struct TabWidthPreferenceKey: PreferenceKey {

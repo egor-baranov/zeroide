@@ -649,6 +649,27 @@ final class AppModel: NSObject, ObservableObject {
         }
     }
 
+    func moveTab(withIdentifier identifier: String, toIndex destinationIndex: Int, in pane: EditorPane) {
+        guard let paneIndex = panes.firstIndex(where: { $0.id == pane.id }),
+              let location = tabLocation(forIdentifier: identifier) else { return }
+
+        let tab = location.tab
+        panes[location.paneIndex].tabs.remove(at: location.tabIndex)
+
+        var insertIndex = destinationIndex
+        if paneIndex == location.paneIndex && location.tabIndex < destinationIndex {
+            insertIndex -= 1
+        }
+        insertIndex = max(0, min(insertIndex, panes[paneIndex].tabs.count))
+
+        panes[paneIndex].tabs.insert(tab, at: insertIndex)
+        panes[paneIndex].activeTabID = tab.id
+
+        if paneIndex != location.paneIndex {
+            removePaneIfEmpty(at: location.paneIndex)
+        }
+    }
+
     func handleDrop(_ providers: [NSItemProvider], into pane: EditorPane) -> Bool {
         if let fileProvider = providers.first(where: {
             $0.hasItemConformingToTypeIdentifier(UTType.fileURL.identifier)

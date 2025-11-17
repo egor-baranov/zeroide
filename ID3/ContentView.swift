@@ -432,53 +432,77 @@ private struct EditorWorkspaceView: View {
 private struct PaneContainer: View {
     @EnvironmentObject private var appModel: AppModel
     let pane: EditorPane
-    @State private var isPaneTarget = false
     @State private var isSplitLeftTarget = false
     @State private var isSplitRightTarget = false
-    private let dropTypes: [UTType] = [.plainText, .fileURL, .url]
+    @State private var isCenterTarget = false
+    @State private var isTabBarDropTarget = false
+    private let paneDropTypes: [UTType] = [.plainText, .fileURL, .url]
+    private let splitDropTypes: [UTType] = [.plainText, .fileURL, .url]
+    private let centerSplitTopInset: CGFloat = 36
+    private let sideSplitTopInset: CGFloat = 0
+    private var isCenterHighlightActive: Bool {
+        isCenterTarget || isTabBarDropTarget
+    }
 
     var body: some View {
         VStack(spacing: 0) {
-            EditorTabBar(pane: pane, onTargetChange: { isTargeted in
-                isPaneTarget = isTargeted
-            })
+            EditorTabBar(pane: pane) { isTargeted in
+                isTabBarDropTarget = isTargeted
+            }
             Divider()
-            EditorSurface(pane: pane)
-        }
-        .frame(maxWidth: .infinity, maxHeight: .infinity)
-        .overlay(
-            GeometryReader { geo in
-                ZStack {
-                    RoundedRectangle(cornerRadius: 10, style: .continuous)
-                        .stroke(Color.ideAccent, lineWidth: 2)
-                        .padding(3)
-                        .opacity(isPaneTarget ? 0.4 : 0)
-                        .animation(.easeInOut(duration: 0.2), value: isPaneTarget)
+            ZStack(alignment: .top) {
+                EditorSurface(pane: pane)
+                    .overlay(
+                        RoundedRectangle(cornerRadius: 12, style: .continuous)
+                            .stroke(Color.ideAccent, lineWidth: 2)
+                            .opacity(isCenterHighlightActive ? 0.6 : 0)
+                            .animation(.easeInOut(duration: 0.2), value: isCenterHighlightActive)
+                            .allowsHitTesting(false)
+                    )
 
-                    HStack(spacing: 0) {
-                        splitZone(width: geo.size.width * 0.3,
+                GeometryReader { geo in
+                    let width = geo.size.width
+                    let height = geo.size.height
+                    let leftWidth = width * 0.3
+                    let centerWidth = width * 0.4
+                    let rightWidth = width * 0.3
+                    let centerHeight = max(height - centerSplitTopInset, 0)
+                    let sideHeight = max(height - sideSplitTopInset, 0)
+
+                    ZStack(alignment: .topLeading) {
+                        splitZone(width: leftWidth,
+                                  height: sideHeight,
                                   isTargeted: $isSplitLeftTarget,
+                                  dropTypes: splitDropTypes,
                                   action: { providers in
                                       appModel.handleDropIntoNewPaneBefore(providers, before: pane)
                                   })
+                        .offset(x: 0, y: sideSplitTopInset)
 
-                        Color.clear
-                            .frame(width: geo.size.width * 0.4)
-                            .allowsHitTesting(false)
+                        splitZone(width: centerWidth,
+                                  height: centerHeight,
+                                  isTargeted: $isCenterTarget,
+                                  dropTypes: paneDropTypes,
+                                  action: { providers in
+                                      appModel.handleDrop(providers, into: pane)
+                                  },
+                                  showsHighlight: false)
+                        .offset(x: leftWidth, y: centerSplitTopInset)
 
-                        splitZone(width: geo.size.width * 0.3,
+                        splitZone(width: rightWidth,
+                                  height: sideHeight,
                                   isTargeted: $isSplitRightTarget,
+                                  dropTypes: splitDropTypes,
                                   action: { providers in
                                       appModel.handleDropIntoNewPane(providers, after: pane)
                                   })
+                        .offset(x: leftWidth + centerWidth, y: sideSplitTopInset)
                     }
+                    .frame(maxWidth: .infinity, maxHeight: .infinity, alignment: .topLeading)
                 }
             }
-        )
-        .contentShape(Rectangle())
-        .onDrop(of: dropTypes, isTargeted: $isPaneTarget) { providers in
-            appModel.handleDrop(providers, into: pane)
         }
+        .frame(maxWidth: .infinity, maxHeight: .infinity)
         .simultaneousGesture(
             TapGesture().onEnded {
                 appModel.activePaneID = pane.id
@@ -487,19 +511,28 @@ private struct PaneContainer: View {
     }
 
     private func splitZone(width: CGFloat,
+                           height: CGFloat,
                            isTargeted: Binding<Bool>,
-                           action: @escaping ([NSItemProvider]) -> Bool) -> some View {
-        ZStack {
-            RoundedRectangle(cornerRadius: 10, style: .continuous)
-                .stroke(Color.ideAccent, lineWidth: 2)
-                .padding(.vertical, 6)
-                .opacity(isTargeted.wrappedValue ? 0.6 : 0)
-                .animation(.easeInOut(duration: 0.2), value: isTargeted.wrappedValue)
-        }
-        .frame(width: width)
-        .contentShape(Rectangle())
-        .allowsHitTesting(isTargeted.wrappedValue)
-        .onDrop(of: dropTypes, isTargeted: isTargeted, perform: action)
+                           dropTypes: [UTType],
+                           action: @escaping ([NSItemProvider]) -> Bool,
+                           allowsInteraction: Bool = true,
+                           showsHighlight: Bool = true) -> some View {
+        Rectangle()
+            .fill(Color.clear)
+            .frame(width: width, height: height)
+            .overlay(
+                Group {
+                    if showsHighlight {
+                        RoundedRectangle(cornerRadius: 10, style: .continuous)
+                            .stroke(Color.ideAccent, lineWidth: 2)
+                            .opacity(isTargeted.wrappedValue ? 0.6 : 0)
+                            .animation(.easeInOut(duration: 0.2), value: isTargeted.wrappedValue)
+                    }
+                }
+            )
+            .contentShape(Rectangle())
+            .allowsHitTesting(allowsInteraction)
+            .onDrop(of: dropTypes, isTargeted: isTargeted, perform: action)
     }
 }
 
