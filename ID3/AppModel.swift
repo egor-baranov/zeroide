@@ -165,6 +165,7 @@ final class AppModel: NSObject, ObservableObject {
     @Published var fileTree: [WorkspaceNode] = []
     @Published var panes: [EditorPane]
     @Published var activePaneID: EditorPane.ID
+    @Published var paneWidthFractions: [EditorPane.ID: CGFloat]
     @Published var recentWorkspaces: [URL] = []
     @Published private var tabContents: [EditorTab.ID: String] = [:]
 
@@ -191,6 +192,46 @@ final class AppModel: NSObject, ObservableObject {
 
     var focusedFileURL: URL? {
         activePane?.activeTab?.fileURL
+    }
+
+    func widthFraction(for pane: EditorPane) -> CGFloat {
+        paneWidthFractions[pane.id] ?? (1 / CGFloat(max(panes.count, 1)))
+    }
+
+    func paneWidthSnapshot() -> [EditorPane.ID: CGFloat] {
+        let paneIDs = panes.map(\.id)
+        guard !paneIDs.isEmpty else { return [:] }
+
+        var snapshot: [EditorPane.ID: CGFloat] = [:]
+        for id in paneIDs {
+            if let value = paneWidthFractions[id] {
+                snapshot[id] = value
+            }
+        }
+
+        if snapshot.count < paneIDs.count {
+            let fallback = 1 / CGFloat(paneIDs.count)
+            for id in paneIDs where snapshot[id] == nil {
+                snapshot[id] = fallback
+            }
+        }
+
+        let total = snapshot.values.reduce(0, +)
+        guard total > 0 else {
+            let equal = 1 / CGFloat(paneIDs.count)
+            return Dictionary(uniqueKeysWithValues: paneIDs.map { ($0, equal) })
+        }
+
+        var normalized: [EditorPane.ID: CGFloat] = [:]
+        for (key, value) in snapshot {
+            normalized[key] = value / total
+        }
+        return normalized
+    }
+
+    func commitPaneWidthFractions(_ fractions: [EditorPane.ID: CGFloat]) {
+        paneWidthFractions = fractions
+        normalizePaneWidths()
     }
 
     private var activePaneIndex: Int? {
@@ -246,6 +287,7 @@ final class AppModel: NSObject, ObservableObject {
             let pane = EditorPane()
             panes = [pane]
             activePaneID = pane.id
+            paneWidthFractions = [pane.id: 1]
         } else if !panes.contains(where: { $0.id == activePaneID }) {
             activePaneID = panes[0].id
         }
@@ -263,6 +305,8 @@ final class AppModel: NSObject, ObservableObject {
         guard panes.indices.contains(index) else { return }
         guard panes[index].tabs.isEmpty, panes.count > 1 else { return }
         let removed = panes.remove(at: index)
+        paneWidthFractions.removeValue(forKey: removed.id)
+        normalizePaneWidths()
         if removed.id == activePaneID {
             let newIndex = min(index, panes.count - 1)
             activePaneID = panes[newIndex].id
@@ -277,7 +321,8 @@ final class AppModel: NSObject, ObservableObject {
         } else {
             insertIndex = panes.count
         }
-        return createPane(insertingAt: insertIndex)
+        let referenceID = referencePaneID ?? (insertIndex > 0 && insertIndex - 1 < panes.count ? panes[insertIndex - 1].id : nil)
+        return createPane(insertingAt: insertIndex, splitting: referenceID)
     }
 
     private func createPane(before referencePaneID: EditorPane.ID?) -> EditorPane {
@@ -288,20 +333,95 @@ final class AppModel: NSObject, ObservableObject {
         } else {
             insertIndex = 0
         }
-        return createPane(insertingAt: insertIndex)
+        let referenceID = referencePaneID ?? (insertIndex < panes.count ? panes[insertIndex].id : panes.last?.id)
+        return createPane(insertingAt: insertIndex, splitting: referenceID)
     }
 
-    private func createPane(insertingAt index: Int) -> EditorPane {
+    private func createPane(insertingAt index: Int, splitting referencePaneID: EditorPane.ID?) -> EditorPane {
         let pane = EditorPane()
         let clamped = max(0, min(index, panes.count))
         panes.insert(pane, at: clamped)
+        handlePaneInsertion(newPane: pane, splitting: referencePaneID)
         return pane
+    }
+
+    private func handlePaneInsertion(newPane: EditorPane, splitting referencePaneID: EditorPane.ID?) {
+        ensurePaneWidthEntries()
+        if panes.count == 1 {
+            paneWidthFractions[newPane.id] = 1
+            return
+        }
+
+        if let referencePaneID,
+           let referenceWidth = paneWidthFractions[referencePaneID] {
+            let splitWidth = referenceWidth / 2
+            paneWidthFractions[referencePaneID] = splitWidth
+            paneWidthFractions[newPane.id] = splitWidth
+            normalizePaneWidths()
+        } else {
+            applyEqualPaneWidthDistribution()
+        }
+    }
+
+    private func applyEqualPaneWidthDistribution() {
+        guard !panes.isEmpty else {
+            paneWidthFractions = [:]
+            return
+        }
+        let equalFraction = 1 / CGFloat(panes.count)
+        paneWidthFractions = Dictionary(uniqueKeysWithValues: panes.map { ($0.id, equalFraction) })
+    }
+
+    private func ensurePaneWidthEntries() {
+        let paneIDs = panes.map(\.id)
+        paneWidthFractions = paneWidthFractions.filter { paneIDs.contains($0.key) }
+        guard !paneIDs.isEmpty else {
+            paneWidthFractions = [:]
+            return
+        }
+        if paneWidthFractions.isEmpty {
+            applyEqualPaneWidthDistribution()
+            return
+        }
+        let missing = paneIDs.filter { paneWidthFractions[$0] == nil }
+        if !missing.isEmpty {
+            let defaultFraction = 1 / CGFloat(paneIDs.count)
+            for id in missing {
+                paneWidthFractions[id] = defaultFraction
+            }
+        }
+        normalizePaneWidths()
+    }
+
+    private func normalizePaneWidths() {
+        let paneIDs = panes.map(\.id)
+        var filtered: [EditorPane.ID: CGFloat] = [:]
+        for id in paneIDs {
+            if let value = paneWidthFractions[id] {
+                filtered[id] = value
+            }
+        }
+        guard !filtered.isEmpty else {
+            applyEqualPaneWidthDistribution()
+            return
+        }
+        let total = filtered.values.reduce(0, +)
+        guard total > 0 else {
+            applyEqualPaneWidthDistribution()
+            return
+        }
+        var normalized: [EditorPane.ID: CGFloat] = [:]
+        for (key, value) in filtered {
+            normalized[key] = value / total
+        }
+        paneWidthFractions = normalized
     }
 
     override init() {
         let initialPane = EditorPane()
         _panes = Published(initialValue: [initialPane])
         _activePaneID = Published(initialValue: initialPane.id)
+        _paneWidthFractions = Published(initialValue: [initialPane.id: 1])
         super.init()
         if let saved = UserDefaults.standard.array(forKey: recentWorkspacesKey) as? [String] {
             recentWorkspaces = saved.compactMap { URL(fileURLWithPath: $0) }
@@ -753,6 +873,7 @@ final class AppModel: NSObject, ObservableObject {
         let pane = EditorPane()
         panes = [pane]
         activePaneID = pane.id
+        paneWidthFractions = [pane.id: 1]
         rebuildFileTree()
         DispatchQueue.main.async { [weak self] in
             self?.openFirstFileIfAvailable()

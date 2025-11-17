@@ -414,18 +414,88 @@ private extension View {
 
 private struct EditorWorkspaceView: View {
     @EnvironmentObject private var appModel: AppModel
+    @State private var livePaneFractions: [EditorPane.ID: CGFloat]? = nil
 
     var body: some View {
-        HStack(spacing: 0) {
-            ForEach(appModel.panes) { pane in
-                PaneContainer(pane: pane)
+        GeometryReader { proxy in
+            let totalWidth = max(proxy.size.width, 1)
+            let handleWidth: CGFloat = 12
+            let handlesTotal = handleWidth * CGFloat(max(appModel.panes.count - 1, 0))
+            let availableWidth = max(totalWidth - handlesTotal, 0)
+            HStack(spacing: 0) {
+                ForEach(Array(appModel.panes.enumerated()), id: \.element.id) { index, pane in
+                    PaneContainer(pane: pane)
+                        .frame(width: fraction(for: pane) * availableWidth)
 
-                if pane.id != appModel.panes.last?.id {
-                    Divider()
-                        .frame(maxHeight: .infinity)
+                    if index < appModel.panes.count - 1 {
+                        let nextPane = appModel.panes[index + 1]
+                        PaneResizeHandle(
+                            handleWidth: handleWidth,
+                            onBegin: { beginPaneResize() },
+                            onChange: { delta in
+                                updatePaneResize(
+                                    leading: pane.id,
+                                    trailing: nextPane.id,
+                                    delta: delta,
+                                    totalWidth: availableWidth
+                                )
+                            },
+                            onEnd: { endPaneResize() }
+                        )
+                    }
                 }
             }
         }
+    }
+
+    private func fraction(for pane: EditorPane) -> CGFloat {
+        livePaneFractions?[pane.id] ?? appModel.widthFraction(for: pane)
+    }
+
+    private func beginPaneResize() {
+        if livePaneFractions == nil {
+            livePaneFractions = appModel.paneWidthSnapshot()
+        }
+    }
+
+    private func updatePaneResize(leading: EditorPane.ID,
+                                  trailing: EditorPane.ID,
+                                  delta: CGFloat,
+                                  totalWidth: CGFloat) {
+        guard totalWidth > 0 else { return }
+        var fractions = livePaneFractions ?? appModel.paneWidthSnapshot()
+        guard var leadingValue = fractions[leading],
+              var trailingValue = fractions[trailing] else { return }
+
+        let deltaFraction = delta / totalWidth
+        guard deltaFraction != 0 else { return }
+
+        let minFraction: CGFloat = 0.08
+        let maxIncrease = max(trailingValue - minFraction, 0)
+        let maxDecrease = max(leadingValue - minFraction, 0)
+
+        var clampedDelta = deltaFraction
+        if clampedDelta > maxIncrease {
+            clampedDelta = maxIncrease
+        }
+        if clampedDelta < -maxDecrease {
+            clampedDelta = -maxDecrease
+        }
+        guard clampedDelta != 0 else { return }
+
+        leadingValue += clampedDelta
+        trailingValue -= clampedDelta
+
+        fractions[leading] = leadingValue
+        fractions[trailing] = trailingValue
+        livePaneFractions = fractions
+    }
+
+    private func endPaneResize() {
+        if let livePaneFractions {
+            appModel.commitPaneWidthFractions(livePaneFractions)
+        }
+        livePaneFractions = nil
     }
 }
 
@@ -533,6 +603,52 @@ private struct PaneContainer: View {
             .contentShape(Rectangle())
             .allowsHitTesting(allowsInteraction)
             .onDrop(of: dropTypes, isTargeted: isTargeted, perform: action)
+    }
+}
+
+private struct PaneResizeHandle: View {
+    let handleWidth: CGFloat
+    let onBegin: () -> Void
+    let onChange: (CGFloat) -> Void
+    let onEnd: () -> Void
+    @State private var lastTranslation: CGFloat = 0
+    @State private var isDragging = false
+
+    var body: some View {
+        Rectangle()
+            .fill(Color.clear)
+            .frame(width: handleWidth)
+            .frame(maxHeight: .infinity)
+            .overlay(
+                Capsule(style: .continuous)
+                    .fill(isDragging ? Color.ideAccent : Color.secondary.opacity(0.35))
+                    .frame(width: 2)
+            )
+            .contentShape(Rectangle())
+            .gesture(
+                DragGesture(minimumDistance: 0, coordinateSpace: .global)
+                    .onChanged { value in
+                        if !isDragging {
+                            isDragging = true
+                            onBegin()
+                        }
+                        let delta = value.translation.width - lastTranslation
+                        lastTranslation = value.translation.width
+                        onChange(delta)
+                    }
+                    .onEnded { _ in
+                        isDragging = false
+                        lastTranslation = 0
+                        onEnd()
+                    }
+            )
+            .onHover { hovering in
+                if hovering {
+                    NSCursor.resizeLeftRight.set()
+                } else {
+                    NSCursor.arrow.set()
+                }
+            }
     }
 }
 
