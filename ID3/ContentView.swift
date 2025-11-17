@@ -8,8 +8,8 @@ struct ContentView: View {
     @State private var showChatSidebar = false
     @State private var sidebarWidth: CGFloat = 280
     @State private var chatWidth: CGFloat = 320
-    @State private var sidebarDragOrigin: CGFloat?
-    @State private var chatDragOrigin: CGFloat?
+    @GestureState private var sidebarDragOffset: CGFloat = 0
+    @GestureState private var chatDragOffset: CGFloat = 0
     @State private var chatMessages: [ChatMessage] = [
         ChatMessage(role: .assistant, text: "Hi! I'm here if you need help or want to jot notes while you work.")
     ]
@@ -265,22 +265,26 @@ private var commandBarWidthEstimate: CGFloat? {
     }
 
     private var mainWorkspaceView: some View {
-        HStack(spacing: 0) {
+        let liveSidebarWidth = clamp(sidebarWidth + sidebarDragOffset, min: 200, max: 520)
+        let liveChatWidth = clamp(chatWidth + chatDragOffset, min: 240, max: 520)
+
+        return HStack(spacing: 0) {
             if showSidebar {
                 WorkspaceSidebar()
-                    .frame(width: sidebarWidth)
+                    .frame(width: liveSidebarWidth)
                     .frame(maxHeight: .infinity)
                     .background(Color.ideSidebar)
                     .overlay(alignment: .trailing) {
                         DragHandle(edge: .trailing)
                             .gesture(
-                                DragGesture(minimumDistance: 0)
-                                    .onChanged { value in
-                                        if sidebarDragOrigin == nil { sidebarDragOrigin = sidebarWidth }
-                                        let base = sidebarDragOrigin ?? sidebarWidth
-                                        sidebarWidth = clamp(base + value.translation.width, min: 200, max: 520)
+                                DragGesture(minimumDistance: 0, coordinateSpace: .global)
+                                    .updating($sidebarDragOffset) { value, state, _ in
+                                        let proposed = clamp(sidebarWidth + value.translation.width, min: 200, max: 520)
+                                        state = proposed - sidebarWidth
                                     }
-                                    .onEnded { _ in sidebarDragOrigin = nil }
+                                    .onEnded { value in
+                                        sidebarWidth = clamp(sidebarWidth + value.translation.width, min: 200, max: 520)
+                                    }
                             )
                     }
                     .transition(.move(edge: .leading).combined(with: .opacity))
@@ -295,18 +299,19 @@ private var commandBarWidthEstimate: CGFloat? {
                     messages: $chatMessages,
                     closeAction: { showChatSidebar = false }
                 )
-                    .frame(width: chatWidth)
+                    .frame(width: liveChatWidth)
                     .background(Color.ideSidebar)
                     .overlay(alignment: .leading) {
                         DragHandle()
                             .gesture(
-                                DragGesture(minimumDistance: 0)
-                                    .onChanged { value in
-                                        if chatDragOrigin == nil { chatDragOrigin = chatWidth }
-                                        let base = chatDragOrigin ?? chatWidth
-                                        chatWidth = clamp(base - value.translation.width, min: 240, max: 520)
+                                DragGesture(minimumDistance: 0, coordinateSpace: .global)
+                                    .updating($chatDragOffset) { value, state, _ in
+                                        let proposed = clamp(chatWidth - value.translation.width, min: 240, max: 520)
+                                        state = proposed - chatWidth
                                     }
-                                    .onEnded { _ in chatDragOrigin = nil }
+                                    .onEnded { value in
+                                        chatWidth = clamp(chatWidth - value.translation.width, min: 240, max: 520)
+                                    }
                             )
                     }
                     .transition(.move(edge: .trailing).combined(with: .opacity))
