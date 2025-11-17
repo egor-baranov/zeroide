@@ -118,6 +118,15 @@ struct EditorTab: Identifiable, Hashable {
         return false
     }
 
+    var dragIdentifier: String {
+        "\(id.hashValue)"
+    }
+
+    var webURL: URL? {
+        if case let .web(url) = kind { return url }
+        return nil
+    }
+
     func subtitle(relativeTo workspace: URL?) -> String {
         guard case let .file(url) = kind else { return "" }
         guard let workspace = workspace else {
@@ -130,6 +139,23 @@ struct EditorTab: Identifiable, Hashable {
     }
 }
 
+struct EditorPane: Identifiable, Hashable {
+    let id: UUID
+    var tabs: [EditorTab]
+    var activeTabID: EditorTab.ID?
+
+    init(id: UUID = UUID(), tabs: [EditorTab] = [], active: EditorTab.ID? = nil) {
+        self.id = id
+        self.tabs = tabs
+        self.activeTabID = active
+    }
+
+    var activeTab: EditorTab? {
+        guard let activeTabID else { return nil }
+        return tabs.first { $0.id == activeTabID }
+    }
+}
+
 final class AppModel: NSObject, ObservableObject {
     @Published var workspaceURL: URL?
     @Published var reloadToken = UUID()
@@ -137,10 +163,10 @@ final class AppModel: NSObject, ObservableObject {
     @Published var editorMode: EditorMode = .native
     @Published var fileTree: [WorkspaceNode] = []
     @Published var selectedFileURL: URL?
-    @Published var fileContent: String = ""
-    @Published var tabs: [EditorTab] = []
-    @Published var activeTabID: EditorTab.ID?
+    @Published var panes: [EditorPane]
+    @Published var activePaneID: EditorPane.ID
     @Published var recentWorkspaces: [URL] = []
+    @Published private var tabContents: [EditorTab.ID: String] = [:]
 
     private let recentWorkspacesKey = "recentWorkspaces"
     private let recentBookmarksKey = "recentWorkspaceBookmarks"
@@ -148,8 +174,8 @@ final class AppModel: NSObject, ObservableObject {
     private var activeSecurityScopedURL: URL?
 
     var activeTab: EditorTab? {
-        guard let activeTabID else { return nil }
-        return tabs.first(where: { $0.id == activeTabID })
+        guard let index = activePaneIndex else { return nil }
+        return panes[index].activeTab
     }
 
     var isShowingStartTab: Bool {
@@ -163,7 +189,91 @@ final class AppModel: NSObject, ObservableObject {
         return nil
     }
 
+    var activeDocumentText: String {
+        guard let activeID = activeTabID else { return "" }
+        return tabContents[activeID] ?? ""
+    }
+
+    private var activePaneIndex: Int? {
+        panes.firstIndex(where: { $0.id == activePaneID })
+    }
+
+    private var activePane: EditorPane? {
+        guard let index = activePaneIndex else { return nil }
+        return panes[index]
+    }
+
+    var tabs: [EditorTab] {
+        get { activePane?.tabs ?? [] }
+        set {
+            guard let index = activePaneIndex else { return }
+            panes[index].tabs = newValue
+        }
+    }
+
+    var activeTabID: EditorTab.ID? {
+        get { activePane?.activeTabID }
+        set {
+            guard let index = activePaneIndex else { return }
+            panes[index].activeTabID = newValue
+        }
+    }
+
+    func paneIndex(containing tabID: EditorTab.ID) -> Int? {
+        panes.firstIndex { pane in
+            pane.tabs.contains { $0.id == tabID }
+        }
+    }
+
+    func paneIndex(containing tab: EditorTab) -> Int? {
+        panes.firstIndex { pane in
+            pane.tabs.contains(tab)
+        }
+    }
+
+    private func tabLocation(forIdentifier identifier: String) -> (paneIndex: Int, tabIndex: Int, tab: EditorTab)? {
+        for (paneIdx, pane) in panes.enumerated() {
+            for (tabIdx, tab) in pane.tabs.enumerated() {
+                if tab.dragIdentifier == identifier {
+                    return (paneIdx, tabIdx, tab)
+                }
+            }
+        }
+        return nil
+    }
+
+    private func ensureActivePane() {
+        if panes.isEmpty {
+            let pane = EditorPane()
+            panes = [pane]
+            activePaneID = pane.id
+        } else if !panes.contains(where: { $0.id == activePaneID }) {
+            activePaneID = panes[0].id
+        }
+    }
+
+    private var allTabIDs: Set<EditorTab.ID> {
+        Set(panes.flatMap { $0.tabs.map(\.id) })
+    }
+
+    private func pruneTabContents(keeping ids: Set<EditorTab.ID>) {
+        tabContents = tabContents.filter { ids.contains($0.key) }
+    }
+
+    private func removePaneIfEmpty(at index: Int) {
+        guard panes.indices.contains(index) else { return }
+        guard panes[index].tabs.isEmpty, panes.count > 1 else { return }
+        let removed = panes.remove(at: index)
+        if removed.id == activePaneID {
+            let newIndex = min(index, panes.count - 1)
+            activePaneID = panes[newIndex].id
+        }
+    }
+
     override init() {
+        let initialPane = EditorPane()
+        _panes = Published(initialValue: [initialPane])
+        _activePaneID = Published(initialValue: initialPane.id)
         super.init()
         if let saved = UserDefaults.standard.array(forKey: recentWorkspacesKey) as? [String] {
             recentWorkspaces = saved.compactMap { URL(fileURLWithPath: $0) }
@@ -252,31 +362,54 @@ final class AppModel: NSObject, ObservableObject {
         openFile(at: node.url)
     }
 
-    func openFile(at url: URL) {
-        selectedFileURL = url
-        let tab = EditorTab(url: url)
-        if tabs.contains(tab) == false {
-            tabs.append(tab)
+    func openFile(at url: URL, inPane paneID: EditorPane.ID? = nil) {
+        ensureActivePane()
+
+        if let paneID, panes.firstIndex(where: { $0.id == paneID }) != nil {
+            activePaneID = paneID
         }
-        activeTabID = tab.id
-        loadFileContents(from: url)
+
+        guard let paneIndex = activePaneIndex else { return }
+        let prospectiveTab = EditorTab(url: url)
+        if let existingIndex = panes[paneIndex].tabs.firstIndex(of: prospectiveTab) {
+            let existingTab = panes[paneIndex].tabs[existingIndex]
+            panes[paneIndex].activeTabID = existingTab.id
+            selectedFileURL = url
+            if tabContents[existingTab.id] == nil {
+                loadFileContents(for: existingTab, from: url)
+            } else {
+                state = .ready
+            }
+        } else {
+            panes[paneIndex].tabs.append(prospectiveTab)
+            panes[paneIndex].activeTabID = prospectiveTab.id
+            selectedFileURL = url
+            loadFileContents(for: prospectiveTab, from: url)
+        }
+        activePaneID = panes[paneIndex].id
     }
 
     func openWebURL(_ url: URL, replaceCurrentTab: Bool = false) {
         let normalizedURL = normalizeWebURL(url)
         let tab = EditorTab(webURL: normalizedURL)
 
-        if replaceCurrentTab, let activeID = activeTabID, let index = tabs.firstIndex(where: { $0.id == activeID }) {
-            tabs[index] = tab
-            activeTabID = tab.id
+        ensureActivePane()
+        guard let paneIndex = activePaneIndex else { return }
+
+        if replaceCurrentTab,
+           let activeID = panes[paneIndex].activeTabID,
+           let index = panes[paneIndex].tabs.firstIndex(where: { $0.id == activeID }) {
+            tabContents.removeValue(forKey: panes[paneIndex].tabs[index].id)
+            panes[paneIndex].tabs[index] = tab
+            panes[paneIndex].activeTabID = tab.id
         } else {
-            if tabs.contains(tab) == false {
-                tabs.append(tab)
+            if !panes[paneIndex].tabs.contains(tab) {
+                panes[paneIndex].tabs.append(tab)
             }
-            activeTabID = tab.id
+            panes[paneIndex].activeTabID = tab.id
         }
+        activePaneID = panes[paneIndex].id
         selectedFileURL = nil
-        fileContent = ""
         state = .ready
     }
 
@@ -318,18 +451,23 @@ final class AppModel: NSObject, ObservableObject {
     }
 
     func activate(tab: EditorTab) {
+        guard let paneIndex = paneIndex(containing: tab) else { return }
+        activePaneID = panes[paneIndex].id
+        panes[paneIndex].activeTabID = tab.id
+
         switch tab.kind {
         case .file(let url):
-            openFile(at: url)
+            selectedFileURL = url
+            if tabContents[tab.id] == nil {
+                loadFileContents(for: tab, from: url)
+            } else {
+                state = .ready
+            }
         case .canvas:
-            activeTabID = tab.id
             selectedFileURL = nil
-            fileContent = ""
             state = .ready
         case .web:
-            activeTabID = tab.id
             selectedFileURL = nil
-            fileContent = ""
             state = .ready
         }
     }
@@ -355,87 +493,134 @@ final class AppModel: NSObject, ObservableObject {
     }
 
     func closeActiveTab() {
-        guard let activeID = activeTabID, let tab = tabs.first(where: { $0.id == activeID }) else { return }
-        closeTab(tab)
+        guard let activeTab = activeTab else { return }
+        closeTab(activeTab)
     }
 
     func closeTab(_ tab: EditorTab) {
-        guard let index = tabs.firstIndex(of: tab) else { return }
-        tabs.remove(at: index)
+        guard let paneIndex = paneIndex(containing: tab),
+              let tabIndex = panes[paneIndex].tabs.firstIndex(of: tab) else { return }
 
-        if activeTabID == tab.id {
-            if let replacement = tabs.indices.contains(index) ? tabs[index] : tabs.last {
+        panes[paneIndex].tabs.remove(at: tabIndex)
+        tabContents.removeValue(forKey: tab.id)
+
+        if panes[paneIndex].activeTabID == tab.id {
+            if panes[paneIndex].tabs.indices.contains(tabIndex) {
+                let replacement = panes[paneIndex].tabs[tabIndex]
+                panes[paneIndex].activeTabID = replacement.id
+                activate(tab: replacement)
+            } else if let replacement = panes[paneIndex].tabs.last {
+                panes[paneIndex].activeTabID = replacement.id
                 activate(tab: replacement)
             } else {
-                activeTabID = nil
-                selectedFileURL = nil
-                fileContent = ""
-                state = workspaceURL == nil ? .idle : .ready
+                panes[paneIndex].activeTabID = nil
+                if activePaneID == panes[paneIndex].id {
+                    selectedFileURL = nil
+                    state = workspaceURL == nil ? .idle : .ready
+                }
             }
         }
+
+        removePaneIfEmpty(at: paneIndex)
     }
 
     func closeOtherTabs(_ tab: EditorTab) {
-        guard let index = tabs.firstIndex(of: tab) else { return }
-        let target = tabs[index]
-        tabs = [target]
+        guard let paneIndex = paneIndex(containing: tab),
+              let tabIndex = panes[paneIndex].tabs.firstIndex(of: tab) else { return }
+        let target = panes[paneIndex].tabs[tabIndex]
+        panes[paneIndex].tabs = [target]
+        panes[paneIndex].activeTabID = target.id
+        pruneTabContents(keeping: allTabIDs)
         activate(tab: target)
     }
 
     func closeTabsToRight(of tab: EditorTab) {
-        guard let index = tabs.firstIndex(of: tab) else { return }
-        guard index < tabs.count - 1 else { return }
+        guard let paneIndex = paneIndex(containing: tab),
+              let tabIndex = panes[paneIndex].tabs.firstIndex(of: tab) else { return }
+        guard tabIndex < panes[paneIndex].tabs.count - 1 else { return }
 
-        let removedIDs = Set(tabs[(index + 1)..<tabs.count].map { $0.id })
-        tabs.removeSubrange((index + 1)..<tabs.count)
+        let removedIDs = panes[paneIndex].tabs[(tabIndex + 1)..<panes[paneIndex].tabs.count].map { $0.id }
+        panes[paneIndex].tabs.removeSubrange((tabIndex + 1)..<panes[paneIndex].tabs.count)
+        for id in removedIDs {
+            tabContents.removeValue(forKey: id)
+        }
 
-        if let activeID = activeTabID, removedIDs.contains(activeID) {
+        if let activeID = panes[paneIndex].activeTabID, removedIDs.contains(activeID) {
+            panes[paneIndex].activeTabID = tab.id
             activate(tab: tab)
         }
     }
 
-    func moveTab(_ dragging: EditorTab, before target: EditorTab?) {
-        guard let fromIndex = tabs.firstIndex(of: dragging) else { return }
+    func splitTabIntoNewPane(_ tab: EditorTab) {
+        guard let sourcePaneIndex = paneIndex(containing: tab),
+              let tabIndex = panes[sourcePaneIndex].tabs.firstIndex(of: tab) else { return }
 
-        if let target, let targetIndex = tabs.firstIndex(of: target) {
-            if fromIndex == targetIndex { return }
-            var destination = targetIndex
-            if fromIndex < targetIndex { destination -= 1 }
-            tabs.move(fromOffsets: IndexSet(integer: fromIndex), toOffset: max(destination, 0))
-        } else {
-            tabs.move(fromOffsets: IndexSet(integer: fromIndex), toOffset: tabs.count)
+        panes[sourcePaneIndex].tabs.remove(at: tabIndex)
+
+        let newPane = EditorPane(tabs: [tab], active: tab.id)
+        let insertIndex = min(sourcePaneIndex + 1, panes.count)
+        panes.insert(newPane, at: insertIndex)
+        activePaneID = newPane.id
+
+        if panes[sourcePaneIndex].tabs.isEmpty {
+            removePaneIfEmpty(at: sourcePaneIndex)
+        } else if panes[sourcePaneIndex].activeTabID == tab.id {
+            let fallbackIndex = min(tabIndex, panes[sourcePaneIndex].tabs.count - 1)
+            panes[sourcePaneIndex].activeTabID = panes[sourcePaneIndex].tabs[fallbackIndex].id
         }
+
+        activate(tab: tab)
     }
 
-    func swapTabs(from index: Int, to destination: Int) {
-        guard tabs.indices.contains(index), tabs.indices.contains(destination) else { return }
-        tabs.swapAt(index, destination)
-    }
-
-    func moveTab(_ tab: EditorTab, to destinationIndex: Int) {
-        guard let currentIndex = tabs.firstIndex(of: tab) else { return }
-        let clamped = max(0, min(destinationIndex, tabs.count - 1))
+    func moveTab(_ tab: EditorTab, to destinationIndex: Int, in pane: EditorPane) {
+        guard let paneIndex = panes.firstIndex(where: { $0.id == pane.id }) else { return }
+        guard let currentIndex = panes[paneIndex].tabs.firstIndex(of: tab) else { return }
+        let clamped = max(0, min(destinationIndex, panes[paneIndex].tabs.count - 1))
         guard currentIndex != clamped else { return }
 
         if clamped > currentIndex {
-            tabs.move(fromOffsets: IndexSet(integer: currentIndex), toOffset: clamped + 1)
+            panes[paneIndex].tabs.move(fromOffsets: IndexSet(integer: currentIndex), toOffset: clamped + 1)
         } else {
-            tabs.move(fromOffsets: IndexSet(integer: currentIndex), toOffset: clamped)
+            panes[paneIndex].tabs.move(fromOffsets: IndexSet(integer: currentIndex), toOffset: clamped)
         }
     }
 
-    func updateNativeEditorText(_ text: String) {
-        fileContent = text
+    func moveTab(withIdentifier identifier: String, toPane targetPaneID: EditorPane.ID) {
+        guard let targetIndex = panes.firstIndex(where: { $0.id == targetPaneID }),
+              let location = tabLocation(forIdentifier: identifier) else { return }
+
+        let tab = location.tab
+        if targetIndex == location.paneIndex {
+            // already handled by drag gesture
+            return
+        }
+
+        panes[location.paneIndex].tabs.remove(at: location.tabIndex)
+        panes[targetIndex].tabs.append(tab)
+        panes[targetIndex].activeTabID = tab.id
+
+        if panes[location.paneIndex].activeTabID == tab.id {
+            panes[location.paneIndex].activeTabID = panes[location.paneIndex].tabs.last?.id
+        }
+
+        removePaneIfEmpty(at: location.paneIndex)
+        activate(tab: tab)
+    }
+
+    func updateActiveDocumentText(_ text: String) {
+        guard let activeID = activeTabID else { return }
+        tabContents[activeID] = text
         if editorMode == .native {
             state = .ready
         }
     }
 
     func saveCurrentFile() {
-        guard let url = selectedFileURL else { return }
+        guard let url = selectedFileURL, let activeID = activeTabID else { return }
 
         do {
-            try fileContent.write(to: url, atomically: true, encoding: .utf8)
+            let text = tabContents[activeID] ?? ""
+            try text.write(to: url, atomically: true, encoding: .utf8)
             state = .ready
         } catch {
             state = .error("Couldn't save \(url.lastPathComponent): \(error.localizedDescription)")
@@ -443,6 +628,7 @@ final class AppModel: NSObject, ObservableObject {
     }
 
     func createStartTab(openImmediately: Bool = true) {
+        ensureActivePane()
         let tab = EditorTab(kind: .canvas(UUID()))
         tabs.append(tab)
         if openImmediately {
@@ -458,9 +644,10 @@ final class AppModel: NSObject, ObservableObject {
         UserDefaults.standard.set(url, forKey: "lastWorkspace")
         recordRecentWorkspace(url)
         selectedFileURL = nil
-        fileContent = ""
-        activeTabID = nil
-        tabs.removeAll()
+        tabContents.removeAll()
+        let pane = EditorPane()
+        panes = [pane]
+        activePaneID = pane.id
         rebuildFileTree()
         DispatchQueue.main.async { [weak self] in
             self?.openFirstFileIfAvailable()
@@ -565,19 +752,19 @@ final class AppModel: NSObject, ObservableObject {
         }
     }
 
-    private func loadFileContents(from url: URL) {
+    private func loadFileContents(for tab: EditorTab, from url: URL) {
         let ext = url.pathExtension.lowercased()
         if ImagePreviewSupport.supportsRaster(ext: ext) || ext == "svg" {
-            fileContent = ""
+            tabContents[tab.id] = ""
             state = .ready
             return
         }
 
         do {
-            fileContent = try String(contentsOf: url)
+            tabContents[tab.id] = try String(contentsOf: url)
             state = .ready
         } catch {
-            fileContent = ""
+            tabContents[tab.id] = ""
             state = .error("Couldn't open \(url.lastPathComponent): \(error.localizedDescription)")
         }
     }

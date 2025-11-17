@@ -1,4 +1,5 @@
 import SwiftUI
+import UniformTypeIdentifiers
 
 struct IDEWindowToolbar: View {
     @EnvironmentObject private var appModel: AppModel
@@ -15,16 +16,18 @@ struct IDEWindowToolbar: View {
 
 struct EditorTabBar: View {
     @EnvironmentObject private var appModel: AppModel
+    let pane: EditorPane
     @State private var draggingTab: EditorTab?
     @State private var dragTranslation: CGFloat = 0
     @State private var tabWidths: [EditorTab.ID: CGFloat] = [:]
     @State private var lastReorderTranslation: CGFloat = 0
     @State private var availableWidth: CGFloat = 0
+    @State private var isDropTarget = false
     private let overflowThreshold: CGFloat = 280
 
     var body: some View {
         HStack(spacing: 8) {
-            if appModel.tabs.isEmpty {
+            if pane.tabs.isEmpty {
                 HStack {
                     Text("")
                         .foregroundStyle(.secondary)
@@ -35,10 +38,10 @@ struct EditorTabBar: View {
                 ScrollView(.horizontal, showsIndicators: false) {
                     ScrollViewReader { proxy in
                     HStack(spacing: 4) {
-                        ForEach(appModel.tabs) { tab in
+                        ForEach(pane.tabs) { tab in
                             EditorTabChip(
                                 tab: tab,
-                                isActive: appModel.activeTabID == tab.id,
+                                isActive: pane.activeTabID == tab.id,
                                 closeAction: { appModel.closeTab(tab) }
                             )
                             .id(tab.id)
@@ -47,7 +50,7 @@ struct EditorTabBar: View {
                             .onTapGesture {
                                 appModel.activate(tab: tab)
                             }
-                            .gesture(dragGesture(for: tab))
+                            .gesture(dragGesture(for: tab, in: pane))
                         }
 
                         Rectangle()
@@ -55,7 +58,7 @@ struct EditorTabBar: View {
                             .frame(width: 24, height: 32)
                     }
                     .padding(.horizontal, 8)
-                    .onChange(of: appModel.activeTabID) { target in
+                    .onChange(of: pane.activeTabID) { target in
                         guard let target else { return }
                         withAnimation(.easeInOut(duration: 0.2)) {
                             proxy.scrollTo(target, anchor: .center)
@@ -96,14 +99,24 @@ struct EditorTabBar: View {
         .padding(.horizontal, 8)
         .padding(.vertical, 2)
         .background(Color.ideBackground)
+        .overlay(alignment: .center) {
+            RoundedRectangle(cornerRadius: 8, style: .continuous)
+                .stroke(Color.ideAccent, lineWidth: 2)
+                .padding(2)
+                .opacity(isDropTarget ? 0.6 : 0)
+                .animation(.easeInOut(duration: 0.2), value: isDropTarget)
+        }
+        .onDrop(of: [UTType.plainText, .fileURL, .url], isTargeted: $isDropTarget) { providers in
+            handleDrop(providers, into: pane)
+        }
     }
 }
 
 private extension EditorTabBar {
     var shouldShowOverflowButton: Bool {
-        guard !appModel.tabs.isEmpty, availableWidth > 0 else { return false }
+        guard !pane.tabs.isEmpty, availableWidth > 0 else { return false }
         guard let averageWidth = tabWidths.values.average else { return false }
-        let totalNeeded = averageWidth * CGFloat(appModel.tabs.count)
+        let totalNeeded = averageWidth * CGFloat(pane.tabs.count)
         let reservedRight: CGFloat = 64 // plus + overflow controls
         return totalNeeded > max(availableWidth - reservedRight, 0)
     }
@@ -215,6 +228,9 @@ private struct EditorTabChip: View {
         .onHover { hovering in
             isHovering = hovering
         }
+        .onDrag {
+            NSItemProvider(object: tab.dragIdentifier as NSString)
+        }
         .contextMenu {
             Button("Close Tab") {
                 closeAction()
@@ -224,6 +240,10 @@ private struct EditorTabChip: View {
             }
             Button("Close Tabs to the Right") {
                 appModel.closeTabsToRight(of: tab)
+            }
+            Divider()
+            Button("Split Right") {
+                appModel.splitTabIntoNewPane(tab)
             }
         }
     }
@@ -436,7 +456,7 @@ extension Color {
 }
 
 private extension EditorTabBar {
-    func dragGesture(for tab: EditorTab) -> some Gesture {
+    func dragGesture(for tab: EditorTab, in pane: EditorPane) -> some Gesture {
         DragGesture(minimumDistance: 4)
             .onChanged { value in
                 if draggingTab != tab {
@@ -452,12 +472,41 @@ private extension EditorTabBar {
     }
 
     func handleDragEnd(for tab: EditorTab, translation: CGFloat) {
-        guard let startIndex = appModel.tabs.firstIndex(of: tab) else { return }
+        guard let paneIndex = appModel.paneIndex(containing: tab),
+              let startIndex = appModel.panes[paneIndex].tabs.firstIndex(of: tab) else { return }
         let tabWidth = tabWidths[tab.id] ?? 120
         let step = max(tabWidth + 4, 60)
         let offset = Int((translation / step).rounded())
-        let destination = max(0, min(appModel.tabs.count - 1, startIndex + offset))
-        appModel.moveTab(tab, to: destination)
+        let destination = max(0, min(appModel.panes[paneIndex].tabs.count - 1, startIndex + offset))
+        appModel.moveTab(tab, to: destination, in: appModel.panes[paneIndex])
+    }
+
+    func handleDrop(_ providers: [NSItemProvider], into pane: EditorPane) -> Bool {
+        if let fileProvider = providers.first(where: {
+            $0.hasItemConformingToTypeIdentifier(UTType.fileURL.identifier)
+            || $0.hasItemConformingToTypeIdentifier(UTType.url.identifier)
+        }) {
+            fileProvider.loadObject(ofClass: NSURL.self) { object, _ in
+                guard let url = (object as? NSURL) as URL? ?? object as? URL else { return }
+                DispatchQueue.main.async {
+                    appModel.openFile(at: url, inPane: pane.id)
+                }
+            }
+            return true
+        }
+
+        if let provider = providers.first(where: { $0.canLoadObject(ofClass: NSString.self) }) {
+            provider.loadObject(ofClass: NSString.self) { object, _ in
+                guard let nsString = object as? NSString else { return }
+                let identifier = nsString as String
+                DispatchQueue.main.async {
+                    appModel.moveTab(withIdentifier: identifier, toPane: pane.id)
+                }
+            }
+            return true
+        }
+
+        return false
     }
 }
 

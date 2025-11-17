@@ -9,9 +9,9 @@ struct NativeEditorView: View {
 
     private var textBinding: Binding<String> {
         Binding(
-            get: { appModel.fileContent },
+            get: { appModel.activeDocumentText },
             set: { newValue in
-                appModel.updateNativeEditorText(newValue)
+                appModel.updateActiveDocumentText(newValue)
             }
         )
     }

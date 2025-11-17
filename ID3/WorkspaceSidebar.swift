@@ -151,7 +151,7 @@ private struct FileRow: View {
 
         var body: some View {
             let isSelected = appModel.selectedFileURL == node.url
-            HStack(spacing: 0) {
+            let baseRow = HStack(spacing: 0) {
                 Color.clear.frame(width: indentation)
                 HStack(spacing: 6) {
                     if let isExpanded, let toggleDisclosure {
@@ -188,6 +188,15 @@ private struct FileRow: View {
                     toggleDisclosure?()
                 } else {
                     appModel.selectFile(node)
+                }
+            }
+            Group {
+                if node.isDirectory {
+                    baseRow
+                } else {
+                    baseRow.onDrag {
+                        NSItemProvider(object: node.url as NSURL)
+                    }
                 }
             }
         }

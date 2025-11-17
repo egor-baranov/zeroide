@@ -285,12 +285,9 @@ private var commandBarWidthEstimate: CGFloat? {
                     .transition(.move(edge: .leading).combined(with: .opacity))
             }
 
-            VStack(spacing: 0) {
-                EditorTabBar()
-                EditorSurface()
-            }
-            .frame(maxWidth: .infinity, maxHeight: .infinity)
-            .background(Color.ideBackground)
+            EditorWorkspaceView()
+                .frame(maxWidth: .infinity, maxHeight: .infinity)
+                .background(Color.ideBackground)
 
             if showChatSidebar {
                 ChatSidebar(
@@ -414,6 +411,28 @@ private extension View {
     }
 }
 
+private struct EditorWorkspaceView: View {
+    @EnvironmentObject private var appModel: AppModel
+
+    var body: some View {
+        HStack(spacing: 0) {
+            ForEach(appModel.panes) { pane in
+                VStack(spacing: 0) {
+                    EditorTabBar(pane: pane)
+                    Divider()
+                    EditorSurface(pane: pane)
+                }
+                .frame(maxWidth: .infinity, maxHeight: .infinity)
+
+                if pane.id != appModel.panes.last?.id {
+                    Divider()
+                        .frame(maxHeight: .infinity)
+                }
+            }
+        }
+    }
+}
+
 private struct TabSwitcherShortcuts: View {
     @EnvironmentObject private var appModel: AppModel
 
@@ -453,6 +472,7 @@ private struct TabSwitcherShortcuts: View {
 
 private struct EditorSurface: View {
     @EnvironmentObject private var appModel: AppModel
+    let pane: EditorPane
 
     private var showWorkspacePlaceholder: Bool {
         appModel.workspaceURL == nil
@@ -460,13 +480,13 @@ private struct EditorSurface: View {
 
     private var showFilePlaceholder: Bool {
         appModel.workspaceURL != nil
-        && appModel.selectedFileURL == nil
-        && !appModel.isShowingStartTab
-        && appModel.activeWebURL == nil
+        && pane.activeTab?.fileURL == nil
+        && !(pane.activeTab?.isCanvas ?? false)
+        && pane.activeTab?.webURL == nil
     }
 
     private var showStartTab: Bool {
-        appModel.isShowingStartTab
+        pane.activeTab?.isCanvas ?? false
     }
 
     var body: some View {
@@ -477,7 +497,7 @@ private struct EditorSurface: View {
             case .native:
                 if showWorkspacePlaceholder {
                     ZeroWelcomeView()
-                } else if let webURL = appModel.activeWebURL {
+                } else if let webURL = pane.activeTab?.webURL {
                     WebTabView(url: webURL)
                 } else if showStartTab {
                     StartTabView(
