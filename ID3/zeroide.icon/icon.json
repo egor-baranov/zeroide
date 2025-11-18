@@ -1,0 +1,55 @@
+{
+  "fill" : {
+    "solid" : "extended-gray:1.00000,1.00000"
+  },
+  "groups" : [
+    {
+      "layers" : [
+        {
+          "fill" : {
+            "linear-gradient" : [
+              "display-p3:0.88327,0.50000,0.76035,0.96707",
+              "srgb:0.21369,0.61429,1.00000,1.00000"
+            ],
+            "orientation" : {
+              "start" : {
+                "x" : 0.06596929183080284,
+                "y" : 0.032221884511457244
+              },
+              "stop" : {
+                "x" : 0.7689376501510607,
+                "y" : 0.8609845901368236
+              }
+            }
+          },
+          "glass" : true,
+          "image-name" : "Postmaker Group 10 (1).svg",
+          "name" : "Postmaker Group 10 (1)",
+          "position" : {
+            "scale" : 18,
+            "translation-in-points" : [
+              59.27903408400789,
+              76.74221008059021
+            ]
+          }
+        }
+      ],
+      "shadow" : {
+        "kind" : "neutral",
+        "opacity" : 0.5
+      },
+      "translucency" : {
+        "enabled" : true,
+        "value" : 0.5
+      }
+    }
+  ],
+  "supported-platforms" : {
+    "circles" : [
+      "watchOS"
+    ],
+    "squares" : [
+      "macOS"
+    ]
+  }
+}
